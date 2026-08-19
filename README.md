@@ -76,7 +76,7 @@ code/
   train/            LoRA SFT: pool selection, targets, training, merge
 docs/               the design records the code cites
 schema/schema.json  the single source of truth
-env/                two conda environments and why they are separate
+env/                one host env, one container spec
 ```
 
 Each `.sh` sits next to the `.py` it drives. The `#`-comment header at the top of
@@ -189,13 +189,37 @@ prompts. Break that and the model is fine-tuned for a prompt it will never see.
 
 ## Environment and hardware
 
-Two host conda environments plus a serving container; see
-[env/README.md](env/README.md). The short version: everything that touches
-nibabel/VTK/PIL or the schema runs on the host in `cbct_base`, and only
-`run_vqa_inference.py` runs inside the vLLM container, where this repo is
-mounted at `/project`. That mount is why `build_vqa_pairs.py` writes image paths
-relative to `--project-dir` — the same `qa_pairs.jsonl` has to resolve on both
-sides.
+Two: one host conda env and one container.
+
+```bash
+conda env create -f env/environment.yml    # cbct_base; pulls requirements.txt
+conda activate cbct_base
+```
+
+`cbct_base` runs the whole CPU path — the four renderers, `build_vqa_pairs.py`,
+postprocess, report synthesis, ground truth and scoring — and the inference
+*client*. No GPU, no torch, which is what makes
+`code/pipeline/postprocess/postprocess_now.sh` usable as a fast loop on a
+laptop or a login node.
+
+The container is the vLLM **server**, and also the training stack:
+`env/container_requirements.txt`. Nothing in the pipeline imports vLLM —
+`run_vqa_inference.py` is an HTTP client that sends OpenAI-standard
+`response_format` — so the two halves only ever needed to agree over a socket.
+Serving and training can share one image because vLLM 0.22.0 pins
+`torch==2.11.0` and allows `transformers` 5.9.0, which is exactly what the LoRA
+training needs; vLLM 0.19.0 could not, and that is why this used to be three
+images. The header of that file carries the table and the build steps. **It is
+a spec, not a built image** — verify a first build rather than trusting it.
+
+The repo is mounted at `/project` inside the container, which is why
+`build_vqa_pairs.py` writes image paths relative to `--project-dir`: the same
+`qa_pairs.jsonl` has to resolve on the host and in the container.
+
+`radfact-lite` is pinned to a git SHA, not a PyPI version, and the pin is
+load-bearing — PyPI's 0.1.0 predates a rewrite of the TOOTHFAIRY prompts, so
+`pip install radfact-lite` gives a score not comparable with any number here.
+`official_ranking.py` reports which revision it found.
 
 Inference and the judge each want an A100; a vLLM load takes 15–25 minutes,
 which is why the pipeline starts the server first and renders while it loads.

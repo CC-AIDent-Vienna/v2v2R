@@ -152,7 +152,7 @@
 #
 #   Step 6a starts vLLM in the background BEFORE steps 1-4, and step 7b is the
 #   only place that waits for it. The two halves need different hardware --
-#   image generation is nibabel/VTK/PIL on the host CPU, the weight load is GPU
+#   image generation is nibabel/skimage/PIL on the host CPU, the weight load is GPU
 #   and disk -- and neither reads the other's output, so run serially they
 #   simply add. On a 40-case run that was ~20 min of load charged after ~2
 #   min/case of rendering, with the card idle throughout the first hour.
@@ -623,7 +623,7 @@ fi
     #
     # The server load and the image generation want different hardware and
     # neither waits on the other, so they are started together and the shorter
-    # one disappears inside the longer. Steps 1-4 are nibabel/VTK/PIL on the
+    # one disappears inside the longer. Steps 1-4 are nibabel/skimage/PIL on the
     # host CPU and touch no GPU; the weight load is GPU and disk and touches no
     # generator output. Run serially -- which is what this script did until now,
     # loading the model only at step 7 -- a 40-case run pays ~20 min of load
