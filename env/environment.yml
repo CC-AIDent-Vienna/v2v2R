@@ -1,0 +1,22 @@
+# Curated, cross-platform recipe for the `cbct_base` host env.
+# This is the file to use when rebuilding on a new machine.
+#
+#   conda env create -f env/environment.yml
+#
+# Only python/ipykernel/nodejs were ever `conda install`-ed; everything the
+# pipeline actually imports came in via pip, so the real content lives in
+# requirements.txt and is pulled in by the `- pip: -r ...` line below.
+#
+# This is a curated recipe, not a bit-exact snapshot: it pins what the
+# pipeline imports and lets conda/pip resolve the rest for the platform
+# it is being built on.
+name: cbct_base
+channels:
+  - defaults
+dependencies:
+  - python=3.13
+  - pip
+  - ipykernel
+  - nodejs
+  - pip:
+      - -r requirements.txt
