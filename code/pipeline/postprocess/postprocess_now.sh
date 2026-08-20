@@ -4,7 +4,7 @@
 # an existing predictions/ directory, in one command, on the login node.
 #
 # WHY THIS EXISTS
-#   postprocess_pred.py, synthesize_report.py and survey_facts.py are three
+#   postprocess_pred.py, synthesize_report.py and structured_findings_evaluation.py are three
 #   separate CPU-only scripts that always have to be run in that order, and
 #   running them by hand is where the mistakes happen: surveying summaries
 #   that predate the postprocess change being measured, or reading a report
@@ -31,7 +31,7 @@
 #   <run_dir>/survey/ under a timestamp and never overwrites a previous one.
 #
 # READING THE SURVEY
-#   As of 2026-08-12 the survey is survey_facts.py, and it scores against the
+#   As of 2026-08-12 the survey is structured_findings_evaluation.py, and it scores against the
 #   GENERATED ground truth -- parse_reports_to_gt.py's *_gt.json, one per case,
 #   emitted in PREDICTION SHAPE. That is what makes it fact-level: absence,
 #   atrophy, implants, bridges and every per-tooth finding are ordinary fields
@@ -41,8 +41,9 @@
 #   It replaced survey_findings.py here, which scored the findings against a
 #   hand-coded REPORT_GT table and absence against the SEGMENTATION MASK --
 #   no report enumerates all 32 positions, so absence had nowhere else to go,
-#   and the mask is not always right. survey_findings.py still exists and still
-#   runs; it is simply no longer what this loop calls.
+#   and the mask is not always right. survey_findings.py was deleted on
+#   2026-08-19; its hand-read tables live on in
+#   code/ground_truth/report_gt_tables.py, with no survey around them.
 #
 #   Two views. Four CALL GROUP sections -- 3d, sinus, panoramic, detail --
 #   break down per FIELD, so "which read is failing" is answerable rather than
@@ -52,7 +53,7 @@
 #   shifted is what the flag did.
 #
 #   Files are written as survey_facts_<stamp>.{txt,json} -- a different prefix
-#   from survey_findings.py's survey_<stamp>.*, on purpose. The two score
+#   from the deleted survey_findings.py's survey_<stamp>.*, on purpose. The two score
 #   different questions against different labels, so diffing one against the
 #   other would report every row as changed. Each prefix only ever diffs
 #   against its own kind.
@@ -68,7 +69,7 @@
 #   CASE_IDS="A008 A019"      restrict every stage to these cases
 #   NO_SURVEY=1               stop after the reports
 #   NO_REPORTS=1              stop after the summaries
-#   SURVEY_ARGS=...          extra flags for survey_facts.py
+#   SURVEY_ARGS=...          extra flags for structured_findings_evaluation.py
 #   GT_DIR=...               generated ground truth (default:
 #                            dataset/$SPLIT/outputs/ground_truth)
 #   POSTPROCESS_ARGS="--cross-validate --demote-uncertain"
@@ -243,7 +244,7 @@ fi
 # reason to re-run this after a flag change.
 
 echo ""
-echo "[INFO] --- Stage 3/3: survey_facts.py ---"
+echo "[INFO] --- Stage 3/3: structured_findings_evaluation.py ---"
 if [ ! -d "$GT_DIR" ]; then
     echo "[FAIL] Ground truth not found: $GT_DIR"
     echo "[FAIL] Generate it with parse_reports_to_gt.py first."
@@ -254,7 +255,7 @@ NUM_GT=$(find "$GT_DIR" -maxdepth 1 -name '*_gt.json' | wc -l)
 echo "[INFO] $NUM_GT ground-truth file(s) in $GT_DIR"
 
 mkdir -p "$SURVEY_DIR"
-# A DIFFERENT prefix from survey_findings.py's `survey_*`, deliberately. Those
+# A DIFFERENT prefix from the deleted survey_findings.py's `survey_*`, deliberately. Those
 # files score absence against the segmentation mask and the findings against the
 # hand-coded REPORT_GT; these score everything against the generated GT. Sharing
 # a prefix would diff the two against each other and report every row as changed
@@ -263,7 +264,7 @@ SURVEY_TXT="$SURVEY_DIR/survey_facts_${STAMP}.txt"
 SURVEY_JSON="$SURVEY_DIR/survey_facts_${STAMP}.json"
 
 set +e
-python3 "$CODE_DIR/eval/survey_facts.py" "$RUN_DIR" \
+python3 "$CODE_DIR/eval/structured_findings_evaluation.py" "$RUN_DIR" \
     --gt-dir "$GT_DIR" \
     --schema "$PROJECT_DIR/schema/schema.json" \
     --json-out "$SURVEY_JSON" \
@@ -272,7 +273,7 @@ python3 "$CODE_DIR/eval/survey_facts.py" "$RUN_DIR" \
 STATUS=${PIPESTATUS[0]}
 set -e
 if [ "$STATUS" -ne 0 ]; then
-    echo "[FAIL] survey_facts.py exited $STATUS"
+    echo "[FAIL] structured_findings_evaluation.py exited $STATUS"
     echo "[FAIL] Summaries and reports ARE built -- only the survey failed."
     exit 2
 fi

@@ -157,7 +157,7 @@
 #   simply add. On a 40-case run that was ~20 min of load charged after ~2
 #   min/case of rendering, with the card idle throughout the first hour.
 #
-#   Borrowed from the competition container, where the same overlap is what
+#   Borrowed from code/competition/competition_runner.py, where the same overlap is what
 #   makes a single case fit inside Grand Challenge's 15 minutes. Two habits
 #   came with it: poll /health every second rather than `sleep 90` and then
 #   every 10 s (that pre-wait bought nothing and could hide a ready server for
@@ -273,7 +273,7 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
-PROJECT_DIR="${PROJECT_DIR:-$HOME/V2V2R_ToothFairy4}"
+PROJECT_DIR="${PROJECT_DIR:-$HOME/project_ToothFairy4}"
 CODE_DIR="$PROJECT_DIR/code"
 MODEL_DIR="${MODEL_DIR:-$PROJECT_DIR/models}"
 CONTAINER="${SIF_PATH:-$HOME/containers/extraction.sqsh}"
@@ -309,7 +309,7 @@ MAX_CONCURRENCY="${MAX_CONCURRENCY:-auto}"
 
 # Tokens of KV cache one of this pipeline's requests occupies -- ~1,764 vision
 # + ~3,500 text + reply, measured on the v7.1 validate runs and shared with
-# the competition container's TOKENS_PER_REQUEST.
+# code/competition/competition_runner.py's TOKENS_PER_REQUEST.
 TOKENS_PER_REQUEST="${TOKENS_PER_REQUEST:-6200}"
 # Ceiling for "auto". A case holds ~24-38 calls and they are batched within a
 # case, so slots beyond that have nothing to put in them.
@@ -360,7 +360,8 @@ FACTS_DIR="$BASE_DIR/facts"
 #   4 sinus       nothing to change: it has never taken a facts input.
 #
 # The per-case "facts file missing -> skip the case" guard below is also lifted,
-# since no step needs one any more.
+# since no step needs one any more. Same idea as code/pipeline/preprocess/gen_images_nofacts.sh,
+# which is the standalone version of this for a separate images directory.
 NO_FACTS="${NO_FACTS:-}"
 SCHEMA="$PROJECT_DIR/schema/schema.json"
 
@@ -629,7 +630,7 @@ fi
     # loading the model only at step 7 -- a 40-case run pays ~20 min of load
     # AFTER ~2 min/case of rendering, and the card sits idle for the first hour.
     #
-    # Lifted from the competition container, where the same overlap is what
+    # Lifted from code/competition/competition_runner.py, where the same overlap is what
     # makes one case fit in 15 minutes. There it is the whole game (5+10 -> 10);
     # here it is ~20 minutes off every arm's inference job, which over the five
     # arms of docs/vision_sft_plan.md is worth having.
@@ -951,8 +952,8 @@ fi
     #
     # Read the KV line, NOT vLLM's "Maximum concurrency for 32,768 tokens per
     # request: N" -- that is computed at --max-model-len, and our requests are
-    # ~5x smaller, so it understates the real ceiling by about 5x. The
-    # competition container parses the same line for the same reason.
+    # ~5x smaller, so it understates the real ceiling by about 5x. Same reason
+    # code/competition/competition_runner.py parses the same line.
     #
     # The cap exists because concurrency above the number of calls in a case
     # buys nothing: run_vqa_inference.py batches WITHIN a case, and a case has

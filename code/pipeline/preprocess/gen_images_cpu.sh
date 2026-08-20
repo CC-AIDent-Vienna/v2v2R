@@ -112,7 +112,7 @@ fi
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
-PROJECT_DIR="${PROJECT_DIR:-$HOME/V2V2R_ToothFairy4}"
+PROJECT_DIR="${PROJECT_DIR:-$HOME/project_ToothFairy4}"
 CODE_DIR="$PROJECT_DIR/code"
 RUN_NAME="${RUN_NAME:-aksssr_v6}"
 SCHEMA="$PROJECT_DIR/schema/schema.json"

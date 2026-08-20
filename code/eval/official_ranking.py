@@ -99,16 +99,6 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-# Repo bootstrap. Finds code/ by walking up for _repo.py, so this file does not
-# care how deep it sits, and puts every code group on sys.path so the flat
-# `import postprocess_pred` works across groups. See code/_repo.py.
-import sys as _sys
-import pathlib as _pathlib
-_sys.path.insert(0, str(next(
-    p for p in _pathlib.Path(__file__).resolve().parents
-    if (p / "_repo.py").is_file())))
-from _repo import REPO_ROOT, add_code_paths  # noqa: E402
-add_code_paths()
 
 
 # ── Reference report lookup ───────────────────────────────────────────────

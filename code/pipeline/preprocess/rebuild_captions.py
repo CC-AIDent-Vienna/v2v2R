@@ -48,7 +48,7 @@ code/pipeline/aksssr_pipeline.sh -- everything before it can be skipped):
     python code/pipeline/preprocess/build_vqa_pairs.py \
         --schema schema/schema.json \
         --images-dir outputs/aksssr_v4_validate/images \
-        --project-dir $HOME/V2V2R_ToothFairy4 \
+        --project-dir $HOME/project_ToothFairy4 \
         --out outputs/aksssr_v4_validate/qa_pairs.jsonl
 """
 
@@ -57,6 +57,11 @@ import json
 import re
 import sys
 from pathlib import Path
+
+
+# The single source of truth for filename -> schema image key. Reused rather
+# than re-derived so this script and the QA builder can never disagree about
+# which images a case has.
 
 # Repo bootstrap. Finds code/ by walking up for _repo.py, so this file does not
 # care how deep it sits, and puts every code group on sys.path so the flat
@@ -69,9 +74,6 @@ _sys.path.insert(0, str(next(
 from _repo import REPO_ROOT, add_code_paths  # noqa: E402
 add_code_paths()
 
-# The single source of truth for filename -> schema image key. Reused rather
-# than re-derived so this script and the QA builder can never disagree about
-# which images a case has.
 from build_vqa_pairs import discover_images
 
 from create_panoramic import build_panoramic_caption

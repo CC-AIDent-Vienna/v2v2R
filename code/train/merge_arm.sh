@@ -46,7 +46,7 @@
 
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-$HOME/V2V2R_ToothFairy4}"
+PROJECT_DIR="${PROJECT_DIR:-$HOME/project_ToothFairy4}"
 ADAPTER="${ADAPTER:?set ADAPTER=<dir with adapter_model.safetensors>}"
 OUT_MODEL="${OUT_MODEL:?set OUT_MODEL=<models/Qwen3.5-9B-AWQ-armN>}"
 # The two bases are merge_vision_lora.py's own defaults (bf16 to fit against,

@@ -30,7 +30,7 @@
 
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-$HOME/V2V2R_ToothFairy4}"
+PROJECT_DIR="${PROJECT_DIR:-$HOME/project_ToothFairy4}"
 MODEL_DIR="${MODEL_DIR:-$PROJECT_DIR/models}"
 CONTAINER="${SIF_PATH:-$HOME/containers/vllm019_cu128.sqsh}"
 # Without this, draft_evidence.py's [INFO] lines sit in a block buffer until

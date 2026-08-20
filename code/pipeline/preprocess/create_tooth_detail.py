@@ -77,6 +77,7 @@ from PIL import Image, ImageDraw
 # disagree, and a disagreement mirrors the markers on one script's images.
 # The facts-parsing helpers come from there for the same reason: one
 # definition of "how a facts.json field is read" across all the captions.
+
 # Repo bootstrap. Finds code/ by walking up for _repo.py, so this file does not
 # care how deep it sits, and puts every code group on sys.path so the flat
 # `import postprocess_pred` works across groups. See code/_repo.py.
@@ -87,6 +88,7 @@ _sys.path.insert(0, str(next(
     if (p / "_repo.py").is_file())))
 from _repo import REPO_ROOT, add_code_paths  # noqa: E402
 add_code_paths()
+
 from create_panoramic import (RIGHT_FDI, LEFT_FDI, _side_anchor,
                               load_case_facts, _normalize_fdi_list,
                               _normalize_bridge_spans)

@@ -35,7 +35,7 @@ swallows a field can be seen rather than inferred.
   null        the GT value is null. After 51154c1 this is where absent-tooth
               positions land: a report that says 16 is gone says nothing about
               whether 16 is carious, so those fields are null, not false.
-              Same word survey_facts.py and evaluate_predictions.py already
+              Same word structured_findings_evaluation.py already
               score by, so loss and metric read one definition (§3.2).
   gated       filling_quality where morphology.with_endo is not true. The
               schema gates the fact; supervising it anyway teaches the model to
@@ -82,6 +82,7 @@ import os
 import random
 import sys
 from pathlib import Path
+
 
 # Repo bootstrap. Finds code/ by walking up for _repo.py, so this file does not
 # care how deep it sits, and puts every code group on sys.path so the flat
@@ -150,7 +151,7 @@ DEFAULT_REFUSED = {
 # that a conclusion about H1 rests on.
 SUPERVISED_BY_DECISION = {"with_post_and_core"}
 EVIDENCE_FIELD = "visual_evidence"
-# Free text, scored by nobody: evaluate_predictions.py skips it as prose.
+# Free text, scored by nobody: no survey reads prose fields.
 PROSE_FIELDS = {"findings"}
 
 MASK_REASONS = ("unstated", "null", "gated", "refused", "evidence",

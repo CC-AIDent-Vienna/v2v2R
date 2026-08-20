@@ -69,10 +69,10 @@ code/
   pipeline/
     segmentation/   stage 1 — NOT in this repo; the interface it must satisfy
     preprocess/     volume + mask + facts -> PNGs + captions -> qa_pairs.jsonl
-    infer/          the only GPU stage: vLLM with guided_json
+    infer/          the only GPU stage: vLLM, via OpenAI-standard response_format
     postprocess/    pred -> normalize -> classify + source rules -> report
   ground_truth/     reference reports -> generated GT, shaped like predictions
-  eval/             official ranking, fact-level surveys, judge server
+  eval/             official ranking, the fact-level survey, judge server
   train/            LoRA SFT: pool selection, targets, training, merge
 docs/               the design records the code cites
 schema/schema.json  the single source of truth
@@ -114,7 +114,7 @@ sbatch code/ground_truth/gen_ground_truth.sh validate
 
 `parse_reports_to_gt.py` parses the reference reports into
 `dataset/validate/outputs/ground_truth/{case}_gt.json`, in the same shape as a
-prediction, which is what `survey_facts.py` scores against.
+prediction, which is what `structured_findings_evaluation.py` scores against.
 
 ## Run it
 
@@ -151,7 +151,8 @@ NO_RADFACT=1 code/eval/eval_now.sh ...     # BLEU/METEOR only, no GPU
 ```
 
 There is no test suite and no linter. Verification here means `LIMIT=5` smoke
-runs and the survey-to-survey diff that `survey_facts.py` prints automatically.
+runs and the survey-to-survey diff that `structured_findings_evaluation.py`
+prints automatically.
 
 ## Train it
 

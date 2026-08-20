@@ -1,10 +1,3 @@
-<!-- Research record from the ToothFairy4 / ODIN2026 work, shipped as-is.
-
-It documents a search, not a finished design: arms discussed here were measured
-and abandoned, and it cites modules that implemented them which this repository
-does not contain. Paths to files that ARE here have been updated to this
-repo's layout; the rest are left as written. -->
-
 # Vision-path LoRA SFT — competition-light execution plan
 
 Written 2026-08-14. **This does not replace `docs/vision_sft_plan.md`** — that file stays as
@@ -69,7 +62,7 @@ the better point estimate and an assurance that nothing broke. **The ship rule i
    any margin — **and** nothing in the coverage reconciliation regressed (`called` /
    `unanswered` / `no_image`, and `n_facts_returned` vs `n_facts_asked` per call).
 2. **Do not ship on a survey_facts gain alone.** The few-shot probe moved survey recall
-   0.40 → 0.28 while RadFact logical recall moved +0.0023. `survey_facts` explains
+   0.40 → 0.28 while RadFact logical recall moved +0.0023. `structured_findings_evaluation` explains
    *what* changed; it does not decide.
 3. **If arm 2 and arm 0 land within noise of each other, ship arm 0.** Same number, no
    trained weights, no merge, no change to the submission container. That is strictly
@@ -185,7 +178,7 @@ report*, which for a radiologist who writes what is notable means unremarkable,
 and teaching "most teeth are normal" attacks over-calling more directly than
 anything else here.
 
-**Declined anyway, deliberately.** `survey_facts.py` walks the GT's keys, so
+**Declined anyway, deliberately.** `structured_findings_evaluation.py` walks the GT's keys, so
 filling `unstated` turns 7,122 currently-unscored positions into scored negatives
 and **every recorded baseline stops being comparable** — the 0.572/0.552 AWQ-vs-bf16
 figures, §5's 27.6% overlay zero point, arm 1's held-out table. Changing the metric
@@ -394,14 +387,14 @@ scancel -n judge                           # it does not stop by itself
 
 ### 4.5 Arm 0 — CPU, after arm 2
 
-**[v] `code/rate_matched_null.py` is written and tested** (2026-08-14). It takes the
+**[v] `code/eval/rate_matched_null.py` is written and tested** (2026-08-14). It takes the
 baseline's `predictions/`, suppresses claims until the per-field count matches arm 2's,
 and writes a prediction dir `postprocess_now.sh` scores unchanged. Two blind orderings:
 `--order random` (seeded uniform) and `--order prior` (drop where the finding is rarest
 a priori, from per-(field, FDI) rates over the 1,274 **training** GT files — the script
 refuses a `--prior-dir` under a validate path rather than trusting the caller).
 
-**What counts as a claim follows `survey_facts.py` exactly**, because arm 0 is scored by
+**What counts as a claim follows `structured_findings_evaluation.py` exactly**, because arm 0 is scored by
 it: a `bool` claims when true, a `list` claims once per element, and enums and maps are
 left alone because they score as accuracy and have no false-positive column to game.
 That is the same line §3.5 draws for the 6:1 cap.
@@ -434,7 +427,7 @@ Cut to four things. Everything else in §5.1 is diagnostic and does not gate a d
 2. **Coverage reconciliation** — `called` / `unanswered` / `no_image`, and
    `n_facts_returned` vs `n_facts_asked`. *Read nothing else until this reconciles*: a
    lost call is a coverage difference between arms, not a finding about them.
-3. **`survey_facts.py`**, `PRED` beside `SUMMARY`, on the `[detail]` group — to explain a
+3. **`structured_findings_evaluation.py`**, `PRED` beside `SUMMARY`, on the `[detail]` group — to explain a
    move, never to decide one. The baseline row is §5.0 of the parent.
 4. **Overlay-mention rate** — fraction of `visual_evidence` strings citing the coloured
    outline. One `grep`-scale count, and it is the check that caught the int4 failure
@@ -464,7 +457,7 @@ Cut to four things. Everything else in §5.1 is diagnostic and does not gate a d
 **`code/sft_holdout_metrics.py` is cut.** Held-out ΔAUROC and
 precision-at-matched-recall are H1 instrumentation; with arm 3 gone they inform nothing
 that changes the submission. If a go/no-go is wanted before spending the inference run,
-score the 24 held-out *training* cases with `survey_facts.py` — existing tooling, no new
+score the 24 held-out *training* cases with `structured_findings_evaluation.py` — existing tooling, no new
 file.
 
 ## 6. The parallel lane: caption-before-image
@@ -526,7 +519,7 @@ Two files, both small. Everything else in the pipeline exists.
 | Path | Why |
 |---|---|
 | ~~`code/train/merge_vision_lora.py`~~ | **DONE 2026-08-14 [v]**, and tested end-to-end against a synthetic arm-2-shaped adapter: 2m50s, CPU only, no model load and no quantizer. It merges at the tensor level and hardlinks the 3 of 5 AWQ shards that hold no visual tensor. **It also upgrades §3's central claim from cited to verified: all 110 arm-2 target tensors are bit-identical between bf16 and AWQ**, where the parent had spot-checked one sha256. Four refusals tested against fixtures, each leaving no output behind — all-zero `lora_B` (caught before a shard is read), a 109/110 adapter, a blown-up `lora_alpha`, and a base whose weights differ from the ones the LoRA was fit against. Output is built under `.incomplete` and renamed only after every check passes, so a walltime kill cannot leave a checkpoint that is complete to `ls` and wrong to vLLM. |
-| ~~`code/rate_matched_null.py`~~ | **DONE 2026-08-14 [v]**, §4.5. Imports `field_kind` / `schema_facts` from `survey_facts.py` so "what is a claim" has one definition and arm 0 cannot drift from the metric that scores it. Tested both directions against the existing bf16 and AWQ v7.1 arms (480 claims suppressed in the direction that does real work), plus the §0 guard on a validate `--prior-dir` and the refusal to run before arm 2 exists. Re-counts the written dir and fails if any field is still above target, so a claim that was counted but not undone cannot pass silently. |
+| ~~`code/eval/rate_matched_null.py`~~ | **DONE 2026-08-14 [v]**, §4.5. Imports `field_kind` / `schema_facts` from `structured_findings_evaluation.py` so "what is a claim" has one definition and arm 0 cannot drift from the metric that scores it. Tested both directions against the existing bf16 and AWQ v7.1 arms (480 claims suppressed in the direction that does real work), plus the §0 guard on a validate `--prior-dir` and the refusal to run before arm 2 exists. Re-counts the written dir and fails if any field is still above target, so a claim that was counted but not undone cannot pass silently. |
 
 **[v] `IMAGES_DIR` / `QA_JSONL` overrides — DONE 2026-08-14** (`9dee7e7`), §4.3.
 Tested against the real baseline payload under `DRY_RUN=1`: steps 1–5 skipped, all

@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-$HOME/V2V2R_ToothFairy4}"
+PROJECT_DIR="${PROJECT_DIR:-$HOME/project_ToothFairy4}"
 cd "$PROJECT_DIR"
 
 SPLIT="${1:?Usage: code/eval/eval_now.sh <training|validate> [synthesized_reports_dir]}"

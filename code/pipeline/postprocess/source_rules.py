@@ -147,8 +147,8 @@ def absent_list(facts: Dict) -> Set[int]:
         artefact: gating that too costs F1 0.858 -> 0.850 (0.870 -> 0.828 on
         validate) and would delete A018's "Completely edentulous maxilla".
 
-    See docs/docs/postprocess_pipeline.md, THE RULE -- absent teeth, for the
-    measurement behind this gate.
+    See docs/postprocess_pipeline.md, THE RULE -- absent teeth, and regenerate with
+    code/studies/absent_fov_gate_evidence.py.
     """
     structured = _d(facts.get("structured"))
     absent = {f for f in _ints(structured.get("teeth_absent"))

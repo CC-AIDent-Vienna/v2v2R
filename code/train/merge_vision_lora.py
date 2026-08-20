@@ -60,6 +60,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+
 # Repo bootstrap. Finds code/ by walking up for _repo.py, so this file does not
 # care how deep it sits, and puts every code group on sys.path so the flat
 # `import postprocess_pred` works across groups. See code/_repo.py.
@@ -416,7 +417,7 @@ def merge(args) -> int:
     # This used to print a two-line recipe, as if the check were a step someone
     # had skipped. It is not: the adapter-applied half has never existed. Audited
     # 2026-08-17 -- no --enable-lora / LoRARequest / load_adapter anywhere in
-    # code/ or jobs/, and arms 1, 2, 5 and 6 were all scored without it. Printing
+    # anywhere under code/, and arms 1, 2, 5 and 6 were all scored without it. Printing
     # a command that cannot be completed reads as a chore; printing the gap reads
     # as what it is. See docs/vision_sft_plan_light.md §9.
     print("\n  NOT VERIFIED, AND NOT CURRENTLY VERIFIABLE: that this checkpoint "

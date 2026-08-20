@@ -22,7 +22,7 @@ Two modes:
                  the model NOT to over-call, and it has to be a case where
                  nothing is really there.
 
-  --skeleton     Emit a code/fewshot_examples/<name>.json with the answer keys
+  --skeleton     Emit a code/arms/fewshot_examples/<name>.json with the answer keys
                  read off the pool's own json_schema, so the exemplar cannot
                  have the wrong output shape. Values are written as "TODO"
                  ON PURPOSE: fewshot_probe.py hard-fails on placeholder text,
@@ -62,27 +62,27 @@ leakage into the scored set; fewshot_probe.py refuses to run if one appears.
 Usage
 ─────
     # who are the candidates for the negative-hard crown exemplar?
-    python3 code/train/build_fewshot_exemplars.py --candidates --category crown \\
+    python3 code/arms/build_fewshot_exemplars.py --candidates --category crown \\
         --reports-dir dataset/training/reports --facts-dir dataset/training/facts
 
     # implants / bridges are read from the segmentation, not keywords
-    python3 code/train/build_fewshot_exemplars.py --candidates --category implants \\
+    python3 code/arms/build_fewshot_exemplars.py --candidates --category implants \\
         --reports-dir dataset/training/reports --facts-dir dataset/training/facts
 
     # once chosen, emit the file to fill in
-    python3 code/train/build_fewshot_exemplars.py --skeleton \\
+    python3 code/arms/build_fewshot_exemplars.py --skeleton \\
         --pool-qa-jsonl outputs/fewshot_pool_training/qa_pairs.jsonl \\
         --call 3d_left --cases A011,A064,A073 \\
-        --out code/fewshot_examples/3d_left.json
+        --out code/arms/fewshot_examples/3d_left.json
 
     # fill in every field EXCEPT visual_evidence (from the report + facts), then:
     export OPENAI_API_KEY=sk-...
-    python3 code/train/build_fewshot_exemplars.py --draft-visual-evidence \\
-        --exemplar-file code/fewshot_examples/3d_left.json
+    python3 code/arms/build_fewshot_exemplars.py --draft-visual-evidence \\
+        --exemplar-file code/arms/fewshot_examples/3d_left.json
 
     # then ask the student model what it can actually see (needs the local server)
-    python3 code/train/build_fewshot_exemplars.py --check-perceivable \\
-        --exemplar-file code/fewshot_examples/3d_left.json \\
+    python3 code/arms/build_fewshot_exemplars.py --check-perceivable \\
+        --exemplar-file code/arms/fewshot_examples/3d_left.json \\
         --vllm-url http://localhost:8000/v1
 """
 
@@ -92,6 +92,8 @@ import os
 import re
 import sys
 from pathlib import Path
+
+
 
 # Repo bootstrap. Finds code/ by walking up for _repo.py, so this file does not
 # care how deep it sits, and puts every code group on sys.path so the flat
@@ -104,7 +106,7 @@ _sys.path.insert(0, str(next(
 from _repo import REPO_ROOT, add_code_paths  # noqa: E402
 add_code_paths()
 
-from survey_findings import (  # noqa: E402
+from structured_findings_helper import (  # noqa: E402
     CATEGORIES,
     KEYWORD_RE,
     _as_dict,
@@ -807,7 +809,7 @@ def main():
                          "the repo-root outputs/ground_truth used for validate.")
     ap.add_argument("--project-dir", type=Path, default=Path("."),
                     help="root the pool's image paths are relative to")
-    # Drafting model: same env-var conventions as the judge server's.
+    # Drafting model: same env-var conventions as code/eval/evaluation.sh's judge.
     ap.add_argument("--draft-model", default=os.environ.get("OPENAI_MODEL", "gpt-4o"))
     ap.add_argument("--draft-base-url", default=os.environ.get("OPENAI_BASE_URL", ""))
     ap.add_argument("--api-key-env", default="OPENAI_API_KEY")

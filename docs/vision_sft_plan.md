@@ -1,21 +1,14 @@
-<!-- Research record from the ToothFairy4 / ODIN2026 work, shipped as-is.
-
-It documents a search, not a finished design: arms discussed here were measured
-and abandoned, and it cites modules that implemented them which this repository
-does not contain. Paths to files that ARE here have been updated to this
-repo's layout; the rest are left as written. -->
-
 # Vision-path LoRA SFT on the tooth composite — successor to the few-shot probe
 
 Rewritten 2026-08-12 for schema **v7.1**, the generated-GT scoring path
-(`survey_facts.py`), the cu128 / vLLM 0.19.0 submission environment, and
+(`structured_findings_evaluation.py`), the cu128 / vLLM 0.19.0 submission environment, and
 **`Qwen3.5-9B-AWQ`**. Supersedes the v6.9 draft entirely.
 
 **Stage A1 has now been run** (2026-08-13, branch `lora_sft`) and this document is
 updated to what it measured rather than what it predicted. Everything from stage A2
 onward is still design only.
 
-Conventions inherited from `fewshot_probe_plan.md`: one payload replayed by every arm,
+Conventions inherited from `docs/fewshot_probe_plan.md`: one payload replayed by every arm,
 prompt parity through the pipeline's own renderer, and *a lost call is a difference in
 coverage between the arms, not a finding about them*.
 
@@ -41,7 +34,7 @@ strength is the part that gets lost:
   list: it refuses to emit a row whose case id appears under `dataset/validate`, and
   prints the count it refused. R4's guard is this, not a convention.
 - Validate's 93 `_gt.json` are regenerated and audited alongside training's because
-  they are the *scoring* reference (`survey_facts.py --gt-dir`). Building GT for a
+  they are the *scoring* reference (`structured_findings_evaluation.py --gt-dir`). Building GT for a
   split is not training on it — but it is the one place the two paths touch, so the
   separation is worth stating where someone editing that code will read it.
 
@@ -175,7 +168,7 @@ predictions are byte-identical to the sequential path (verified against a stub s
 38 calls both ways, identical output, 15.45 s → 2.76 s).
 
 **Three more test-phase levers landed with it** (`e594329`), lifted from
-`code/competition_runner.py`, where the same three are what make one case fit in 15
+`code/competition/competition_runner.py`, where the same three are what make one case fit in 15
 minutes. They matter here because five arms each pay them over 40 cases:
 
 - **vLLM starts before image generation, not after it.** The two halves want different
@@ -290,10 +283,10 @@ The GT pipeline was rebuilt and is much better suited to this than the hand-cura
 vocabulary.
 
 It is audited, which the old GT was not:
-- `code/audit_report_facts.py` — three mechanical screens (`laterality`, `not-in-text`,
+- `code/ground_truth/audit_report_facts.py` — three mechanical screens (`laterality`, `not-in-text`,
   `contradiction`), exits 1 on surviving ERRORs so a rebuild can be gated on it.
   `--fix-laterality` applied 73 errors in 37 training cases, 10 in 6 validate cases.
-- `code/build_triage_sheet.py` — the ERRORs laid out for a human, with keep/drop/relabel
+- `code/ground_truth/build_triage_sheet.py` — the ERRORs laid out for a human, with keep/drop/relabel
   decisions emitted as JSON and never written back.
 - `08b8e4b` (consensus file answers to every reader) cut `not-in-text` ERRORs from 102 → 5
   on validate and 626 → 195 on training, and reverted 13 wrongly-drafted drops.
@@ -304,7 +297,7 @@ This replaces the v6.9 draft's tier M/R/X provenance table with the repo's own m
 
 `{case}_gt.json._derivation` records, per arch, `present / absent / unstated / conflicts /
 unlocated`. **Supervise only positions the GT marks as stated; `-100` everything
-`unstated`.** That is the same rule `survey_facts.py` already scores by — *"N = positions
+`unstated`.** That is the same rule `structured_findings_evaluation.py` already scores by — *"N = positions
 BOTH sides answered … A field the prediction left null is not scored — neither is one the
 report never stated."* Loss and metric then share one definition of "the reader looked
 here", which is the property the old plan had to construct by hand and got only
@@ -329,7 +322,7 @@ in the collator (`51154c1`, `code/ground_truth/parse_reports_to_gt.py`):
 2. **On a tooth the report says is gone, the same silence says nothing.**
    `with_caries: false` on an extracted 16 is a category error — there is no crown to be
    sound. Those fields are now `null` in the GT, which is this pipeline's established
-   word for "the reference did not answer here": `survey_facts.py` and
+   word for "the reference did not answer here": `structured_findings_evaluation.py` and
    `evaluate_predictions.py` both drop null-GT pairs, so **the loss mask and the metric
    read one definition instead of two** — which was the stated goal of this section and
    was not previously true.
@@ -536,7 +529,7 @@ Two mitigations, both already built:
 
 **The teacher is `Qwen3.5-27B`** (dense, 52 GB, one H100), chosen by audition rather
 than by size: `code/pipeline/infer/pool_infer.sh` ran it and the student over the *same* 120-case
-payload, the full tooth call, scored by `survey_facts.py`. It beat the student on every
+payload, the full tooth call, scored by `structured_findings_evaluation.py`. It beat the student on every
 axis with signal — `fillings` 0.17/0.06 → 0.38/0.29, `restoration` 0.24/0.33 →
 0.36/0.50, `endodontic` 0.32/0.42 → 0.44/0.48, `post_and_core` 0.05/0.17 → 0.09/0.29.
 **Precision and recall rose together**, which is not what an operating-point shift looks
@@ -773,7 +766,7 @@ and the serving env never have to agree on a transformers version. They only hav
 on the *weights*.
 
 Every job still defaults to `extraction.sqsh` and `QWEN_MODEL_NAME=Qwen3.5-9B`; the new
-container is used by env override, as `workflow.md` documents.
+container is used by env override, as `docs/workflow.md` documents.
 
 ### 4.3 The quantization gap, and how to close it
 
@@ -985,7 +978,7 @@ set left, and the paired CI in §5.1 would be measuring the choosing, not the ar
 ### 5.0 The baseline, printed **[v]**
 
 `outputs/aksssr_v7_validate/`, AWQ arm, 40/40 cases, surveyed against the generated GT
-(`survey/survey_facts_awq_20260813.txt`). This is the row every arm is a delta from, so
+(`survey/structured_findings_evaluation_awq_20260813.txt`). This is the row every arm is a delta from, so
 it is written down rather than cited — an arm that "improved endodontic" is meaningless
 against a number nobody can see.
 
@@ -1027,7 +1020,7 @@ recall did not move at all. So:
    arm's CI (−0.038 to +0.050 on 24 cases) is the precedent: on 40 cases, an effect below
    about +0.03 is not detectable, and the plan must say so before the numbers arrive rather
    than after.
-2. **Diagnostic — `survey_facts.py`**, per field, per call group, `PRED` beside `SUMMARY`.
+2. **Diagnostic — `structured_findings_evaluation.py`**, per field, per call group, `PRED` beside `SUMMARY`.
    This is where a perceptual gain should show up first and most specifically, on the
    `[detail]` group. It explains *what changed*; it does not decide whether the arm won.
 3. **Arm 0 comparison** — claim counts per field, matched. Any precision gain that arm 0
@@ -1054,7 +1047,7 @@ bounds a per-field result is its **positive count** — `with_post_and_core` has
 
 **Win (pre-registered):** arm 2 improves **Final Score** over baseline by an amount whose
 paired 95% CI excludes zero, **and** beats arm 0 at matched claim counts, **and** beats
-arm 3, **and** shows the gain concentrated in the `[detail]` call group of `survey_facts`.
+arm 3, **and** shows the gain concentrated in the `[detail]` call group of `structured_findings_evaluation`.
 
 **H1 is falsified by any of:** arm 3 ≥ arm 2 at 1.5%-matched parameters; arm 0 matching arm
 2 at the same claim count; precision rising while held-out AUROC does not; or the gain
@@ -1077,7 +1070,7 @@ $CB code/pipeline/preprocess/build_vqa_pairs.py --schema schema/schema.json \
 sha256sum schema/schema.json > outputs/vsft_shared_validate/SCHEMA.sha256
 
 # arm 0 — no GPU
-$CB code/rate_matched_null.py --pred-dir outputs/vsft_base_validate/predictions \
+$CB code/eval/rate_matched_null.py --pred-dir outputs/vsft_base_validate/predictions \
     --match-claims outputs/vsft_arm2_validate/predictions --seed 42 \
     --out-dir outputs/vsft_arm0_validate/predictions
 
@@ -1125,7 +1118,7 @@ defect stores 1 fact where 5 were asked and records the call as *answered*.
 
 | Stage | What | Where | Cost |
 |---|---|---|---|
-| **A0** | ~~AWQ validate-40 run~~ **DONE 2026-08-13** — 40/40 predictions, summaries and reports, batched at `MAX_CONCURRENCY=40`, 17 min 19 s wall clock, zero parse errors. Scored by `survey_facts.py`, and its bf16 counterpart was run on identical images to remove the schema+weights confound: **AWQ costs nothing measurable** (N-weighted mean F1 0.572 AWQ vs 0.552 bf16, 8 axis wins each). Both arms live in `outputs/aksssr_v7_validate/`. **Still open:** timing one case under the A10G envelope (`--gpu-memory-utilization 0.55` on a 40 GB card, or `--qos=a30` for the real 24 GB card) against the 15-min budget — the 17-min figure is A100 throughput and does not transfer. | 1×A100 | run done; A10G timing outstanding |
+| **A0** | ~~AWQ validate-40 run~~ **DONE 2026-08-13** — 40/40 predictions, summaries and reports, batched at `MAX_CONCURRENCY=40`, 17 min 19 s wall clock, zero parse errors. Scored by `structured_findings_evaluation.py`, and its bf16 counterpart was run on identical images to remove the schema+weights confound: **AWQ costs nothing measurable** (N-weighted mean F1 0.572 AWQ vs 0.552 bf16, 8 axis wins each). Both arms live in `outputs/aksssr_v7_validate/`. **Still open:** timing one case under the A10G envelope (`--gpu-memory-utilization 0.55` on a 40 GB card, or `--qos=a30` for the real 24 GB card) against the 15-min budget — the 17-min figure is A100 throughput and does not transfer. | 1×A100 | run done; A10G timing outstanding |
 | ~~**A1**~~ | ~~env + param check + structured decoding + comma-tail~~ **DONE 2026-08-13** (`aa48c4b`, `e42972a`, `e594329`, `51154c1`): cu128 env built, R9 closed, R2 both halves landed, GT absent-tooth rule implemented and both splits re-expanded. | login node | **0 GPU**, done |
 | **A2** | ~~pool selection, re-render, shared payload, hash-pin~~ **DONE 2026-08-13** (`79f44d8`, `635fd21`): balanced top-30/prefix pool — wide 120 / narrow 60 / held-out 24, all 25/25/25/25 — 144 cases re-rendered tooth-only in 15.5 min (144/144, 0 fail, 3,064 composites), payload built, schema pinned `8a91c0a7…`. The v6 composites could **not** be reused: `83c95bd` changed the canal from outlined to a translucent fill three days after they were written (R11). | `--partition=cpu` | **0 GPU**, done |
 | **A2b** | ~~is `post_and_core` resolution-limited?~~ **DONE 2026-08-13** (`b05c6ca`, job 554815, 16 min): **no** — §3.2b. Closes the cheapest competing explanation for H1 before an arm was booked, and cost less than the re-render it ruled out. | 1×H100 | done |
@@ -1160,7 +1153,7 @@ with arm 2 as its control — the same two jobs, read the other way round.
 | `code/train/vision_sft.sh` | **DONE `5021472`, `a4a636f`, `611fec3`.** `STAGE=probe\|smoke\|train`; `STAGE=b` chains probe→smoke behind **one** weight load, and stops if the probe fails because a smoke run under a dead backward measures nothing. `ARM` is declared rather than defaulted for `STAGE=train`, so neither arm can run under the other's name. |
 | `code/train/merge_vision_lora.py` | fp32 merge → bf16 cast → write into a copy of the **AWQ** checkpoint (vision tensors are bit-identical, so only `model.visual.*` changes) → copy every sidecar incl. `chat_template.jinja`, `preprocessor_config.json` → verify 20 calls against adapter-applied inference. |
 | `code/sft_holdout_metrics.py` | Held-out field accuracy / **AUROC** / precision-at-matched-recall, plus the **overlay-mention rate**. What the decision gate reads. |
-| `code/rate_matched_null.py` | Arm 0 — suppress baseline claims to a target rate by a non-perceptual ordering; write a prediction dir the CPU path scores unchanged. |
+| `code/eval/rate_matched_null.py` | Arm 0 — suppress baseline claims to a target rate by a non-perceptual ordering; write a prediction dir the CPU path scores unchanged. |
 | `code/train/select_sft_pool.py` | **DONE `79f44d8`.** Ranking + audit → narrow/wide/held-out case lists. `--per-prefix-top` is the balanced mode; held-out is stratified regardless, and drawn from the same per-prefix band as training so the gate is not easier than the task. Asserts no leak and no validate id on exit. |
 | `code/train/draft_evidence.py` | **DONE `8a8773f`, `d652c1f`, `6d2c19f`.** The teacher pass at pool scale. Imports `DRAFT_SYSTEM`/`DRAFT_USER_TEMPLATE`; sends only supervised fields, never nulls, never refused ones; `--base-dir` resolves image paths; raises `NoImage` rather than drafting blind; appends every answer to `drafts.jsonl` and resumes from it. |
 | `code/train/check_evidence_perceivable.py` | **DONE `2b5807d`, `6d2c19f`.** §3.3's screen at pool scale, put to the **student**. Unjudged means **drop**, not keep, and it refuses to write filtered evidence above `--max-failure-rate`. Same append-and-resume rule. |
@@ -1180,7 +1173,7 @@ with arm 2 as its control — the same two jobs, read the other way round.
 ### Reused unchanged
 
 `build_vqa_pairs.py`, `create_tooth_detail.py`, `postprocess_pred.py`,
-`synthesize_report.py`, **`survey_facts.py`**, `survey_findings.py` (its extractors),
+`synthesize_report.py`, **`structured_findings_evaluation.py`**, `survey_findings.py` (its extractors),
 `official_ranking.py`, `per_dataset_breakdown.py`, `parse_reports_to_gt.py`,
 `audit_report_facts.py`, `build_triage_sheet.py`, `survey_gt_quality.py`,
 `code/pipeline/postprocess/postprocess_now.sh`, `code/eval/eval_now.sh`, `code/eval/judge_server.sh`, `schema/schema.json`.
@@ -1195,7 +1188,7 @@ with arm 2 as its control — the same two jobs, read the other way round.
    `outputs/aksssr_v7_validate/predictions_awq/`, surveyed against the generated GT, plus
    a bf16 arm on byte-identical images so the comparison isolates the weights. AWQ shows
    no measurable fact-level cost (mean F1 0.572 vs bf16 0.552 on `SUMMARY`, 8 axis wins
-   each) — see workflow.md, "bf16 vs AWQ, same schema, same pixels". The doc mismatch that
+   each) — see docs/workflow.md, "bf16 vs AWQ, same schema, same pixels". The doc mismatch that
    survived this item is also resolved: **`vllm019_cu128.sqsh` + `Qwen3.5-9B-AWQ` is the
    settled submission pairing, and AWQ is the SFT target**; `CLAUDE.md` now says so, and
    `Qwen3.5-9B-int4-AutoRound` is recorded there as measured-and-rejected.

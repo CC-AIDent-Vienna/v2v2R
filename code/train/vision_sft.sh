@@ -74,7 +74,7 @@
 
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-$HOME/V2V2R_ToothFairy4}"
+PROJECT_DIR="${PROJECT_DIR:-$HOME/project_ToothFairy4}"
 STAGE="${STAGE:-b}"
 ARM="${ARM:-vision+merger}"
 ROWS="${ROWS:-$PROJECT_DIR/outputs/training_results/vsft_pool_training/sft_wide.jsonl}"

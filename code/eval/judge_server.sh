@@ -4,9 +4,9 @@
 #
 # WHY THIS EXISTS
 # ---------------
-# A scoring run that starts its own vLLM, evaluates, then kills it pays the
-# 15-25 min model load EVERY time. This script does ONLY the serving half.
-# Start it once, then run
+# code/eval/evaluation.sh with JUDGE_BACKEND=vllm starts its own vLLM, evaluates,
+# then kills it -- so every evaluation pays the 15-25 min model load. This
+# script does ONLY the serving half. Start it once, then run
 # code/eval/eval_now.sh as many times as you like against it; each run costs just
 # the RadFact calls.
 #
@@ -45,7 +45,7 @@
 
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-$HOME/V2V2R_ToothFairy4}"
+PROJECT_DIR="${PROJECT_DIR:-$HOME/project_ToothFairy4}"
 MODEL_DIR="${MODEL_DIR:-$PROJECT_DIR/models}"
 CONTAINER="${SIF_PATH:-$HOME/containers/extraction.sqsh}"
 QWEN_TEXT_MODEL_NAME="${QWEN_TEXT_MODEL_NAME:-Qwen3-14B}"

@@ -7,9 +7,11 @@
 # pipeline actually imports came in via pip, so the real content lives in
 # requirements.txt and is pulled in by the `- pip: -r ...` line below.
 #
-# This is a curated recipe, not a bit-exact snapshot: it pins what the
-# pipeline imports and lets conda/pip resolve the rest for the platform
-# it is being built on.
+# This is a curated recipe, not a bit-exact snapshot: it pins what the pipeline
+# imports and lets conda/pip resolve the rest for the platform being built on.
+# The machine-specific exports that used to sit beside it were dropped -- they
+# carried build strings and an absolute prefix, and neither survived a move to
+# any other machine.
 name: cbct_base
 channels:
   - defaults

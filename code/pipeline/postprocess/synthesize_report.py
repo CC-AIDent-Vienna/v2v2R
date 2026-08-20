@@ -497,7 +497,7 @@ def render_root_remnants(remnants: List[Dict]) -> List[str]:
     if the read improves.
 
     Measured on outputs/aksssr_v6_facts_validate against the reference
-    reports, per case (code/eval/survey_findings.py does not cover this finding,
+    reports, per case (survey_findings.py does not cover this finding,
     so these came from a concept screen of report vs reference text):
         107 root-remnant teeth claimed, across 35 of 40 cases;
         the references mention a root remnant in 10 cases;
@@ -669,7 +669,7 @@ def render_restoration_summary(restorations: Dict,
     JSON (restoration_summary.groups) for anything downstream that wants them.
 
     Measured on outputs/aksssr_v5_validate against the reference reports
-    (code/eval/survey_findings.py), which is why silence beats the sentence:
+    (survey_findings.py), which is why silence beats the sentence:
         crown          74 claims, 13 right (precision 0.18) -- and it is
                        the ONE finding with no second source, since the
                        panoramic arch read has no crown value, so nothing
@@ -937,7 +937,7 @@ def render_bone_quality(bq: Optional[Dict]) -> List[str]:
     # sentence is therefore now possible and is a deliberate report-content
     # decision, not a code fix; it stays silent until the per-tooth source's
     # precision has been measured the way the gated findings were
-    # (code/eval/survey_findings.py). Until then the gate only reaches the summary
+    # (survey_findings.py). Until then the gate only reaches the summary
     # JSON, which the LLM report arm reads.
     return []
 
@@ -1180,7 +1180,7 @@ def render_maxilla_main(x: Dict, dentition_type: Optional[str] = None,
     #
     # THE COST, STATED: 10% of the reference reports for these cases do name
     # an upper tooth -- restorations and crowns mostly, 4.5% an absence, and
-    # the absences cluster on 18/28. Those
+    # the absences cluster on 18/28 (code/studies/survey_upper_mentions.py). Those
     # sentences are now unreachable. The trade is deliberate: 77% of the same
     # reports say only what this sentence says, and the arch-level read that
     # would fill the other 10% is the one measured at 0.34 precision on the
@@ -1261,7 +1261,7 @@ def render_maxilla_sinus(x: Dict) -> str:
     intrasinusal." / its negative form) is NOT rendered -- dropped per
     explicit instruction this round, and confirmed to stay dropped once it was
     measured: 1 correct against 10 false positives across the validate split,
-    precision 0.09 (code/eval/survey_findings.py). The fact is still built into the
+    precision 0.09 (survey_findings.py). The fact is still built into the
     summary JSON (sinus_intrasinusal_teeth); it just never reaches the report,
     exactly like endodontic filling quality and the restoration groups. The
     nasal-cavity sentence is gone for a different reason: v6.1 has no

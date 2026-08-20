@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-code/eval/survey_facts.py
+code/eval/structured_findings_evaluation.py
 
 Fact-level survey: prediction and summary scored against the GENERATED ground
 truth (`dataset/{split}/outputs/ground_truth/{case}*_gt.json`), not against the
@@ -8,6 +8,9 @@ hand-coded REPORT_GT table in survey_findings.py.
 
 WHY A SECOND SURVEY RATHER THAN AN EDIT
 ───────────────────────────────────────
+(The shared half is no longer duplicated OR imported from the other survey: the
+claim extractors live in structured_findings_helper.py, which both read. What follows is
+about the half that is genuinely different -- the ground truth.)
 survey_findings.py scores against REPORT_GT, a hand-curated {case: {category:
 [fdi]}} table covering five categories, plus the facts file for absent teeth.
 That last row is why its overview says "vs segmentation mask": no report
@@ -40,6 +43,22 @@ GT file and a prediction file are the same kind of object, so `pred_claims(gt)`
 and `pred_claims(pred)` are comparable by construction, with zero case-specific
 logic on either side.
 
+WHAT evaluate_predictions.py DID THAT THIS DOES NOT
+──────────────────────────────────────────────────
+That module was deleted on 2026-08-19. This one covers 68 of its 74 fields and
+adds two it lacked (`dental_arch_findings_*.uncertain_teeth`), plus the SUMMARY
+column, which it could not have -- it only ever read predictions. Of the six it
+scored and this does not, five are on axes that measure nothing here: bone
+quality's `location`/`type` and periodontal resorption's `pattern` sit under
+axes already scored at their trivial constants, `primary_teeth` has N=0 in this
+dataset, and `dentition_type` is derived rather than asked.
+
+The one real capability lost is PER-CLASS confusion: it reported precision and
+recall for each enum VALUE ({"buccal": {...}, "lingual": {...}}), where this
+reports {scored, right} -- accuracy only. If the question is ever "which way is
+this enum wrong" rather than "how often", that breakdown is not in this file and
+would have to be written. `git log -- code/eval/evaluate_predictions.py` has it.
+
 MULTI-READER POLICY
 ───────────────────
 A case may have several reader files (A008_gt.json, F067_2_gt.json, ...). The
@@ -56,6 +75,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+
+
 # Repo bootstrap. Finds code/ by walking up for _repo.py, so this file does not
 # care how deep it sits, and puts every code group on sys.path so the flat
 # `import postprocess_pred` works across groups. See code/_repo.py.
@@ -67,7 +88,7 @@ _sys.path.insert(0, str(next(
 from _repo import REPO_ROOT, add_code_paths  # noqa: E402
 add_code_paths()
 
-from survey_findings import (  # noqa: E402
+from structured_findings_helper import (  # noqa: E402
     ALL_TEETH,
     ARCH_TEETH,
     CATEGORIES,

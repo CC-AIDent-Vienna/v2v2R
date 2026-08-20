@@ -5,7 +5,7 @@ code/ground_truth/parse_reports_to_gt.py
 Extracts structured ground truth from a radiologist's REFERENCE report
 (free text) into the exact same JSON shape as {case_id}_pred.json --
 {"case_id": ..., "global": {...}, "teeth": {...}} -- so
-evaluate_predictions.py can compare prediction vs. ground truth field by
+structured_findings_evaluation.py can compare prediction vs. ground truth field by
 field with zero case-specific logic.
 
 TWO STAGES, NOT ONE. THIS IS THE WHOLE DESIGN.
@@ -65,7 +65,7 @@ NULL MEANS "THE REPORT DID NOT SAY"
 Some fields have no neutral value to default to -- mandible_canal_*.
 location is enum lingual|buccal, and a report that never describes the
 canal's course supports neither. Those stay null rather than being filled
-with a guess, and evaluate_predictions.py drops null-GT pairs from
+with a guess, and structured_findings_evaluation.py drops null-GT pairs from
 exact-match scoring instead of counting the prediction wrong for
 answering something the reference never claimed. Fields that DO have a
 neutral value (extent "none", mucosa "normal", every bool, every list)
@@ -73,7 +73,8 @@ get it, which is what the report's silence actually means for them.
 
 dentition_type is not a field on either side -- it is DERIVED by
 postprocess_pred.build_dentition_type from primary_teeth + eruption, and
-evaluate_predictions.py runs that same derivation over both sides.
+postprocess runs on the prediction side too, so the two agree by
+construction. Nothing scores the field directly any more.
 
 RE-EXPANDING WITHOUT THE GPU
 ─────────────────────────────
@@ -106,6 +107,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+
 # Repo bootstrap. Finds code/ by walking up for _repo.py, so this file does not
 # care how deep it sits, and puts every code group on sys.path so the flat
 # `import postprocess_pred` works across groups. See code/_repo.py.
@@ -116,6 +118,7 @@ _sys.path.insert(0, str(next(
     if (p / "_repo.py").is_file())))
 from _repo import REPO_ROOT, add_code_paths  # noqa: E402
 add_code_paths()
+
 from normalize_pred import normalize_prediction, summarize_repairs  # noqa: E402
 
 try:
@@ -165,10 +168,10 @@ SCOPES2 = ("fully_included", "partially_included")
 # "Maxilla" section (which is why 49 of the 51 are A-cases, the cohort whose
 # reports carry that section header). Asking a report to distinguish fully
 # from partially covered manufactures a claim it never made, and
-# evaluate_predictions.py then grades the model against it.
+# a survey then grades the model against it.
 #
 # Collapsing to included|not_included keeps the one thing a report DOES
-# settle. evaluate_predictions.py folds the prediction the same way before
+# settle. structured_findings_evaluation.py folds the prediction the same way before
 # comparing, so nothing on the prediction side has to change -- see
 # fold_maxilla_scope there.
 MAXILLA_SCOPES = ("included", "not_included")
@@ -225,7 +228,7 @@ CANAL_LOCATIONS = ("lingual", "buccal")
 # applies_to_fdi list, mirrored here the way every other shape in this file
 # mirrors the schema, because the GT is written to match the prediction field
 # for field. A tooth the schema asks about and this set omits gets NO ground
-# truth at all (evaluate_predictions then scores the model's answer against
+# truth at all (a survey then scores the model's answer against
 # nothing), so the two lists have to move together.
 CANAL_TOOTH_FDIS = (36, 37, 38, 46, 47, 48)
 LESION_TYPES = ("radiopaque", "radiolucent")
@@ -1218,7 +1221,7 @@ def _arch_finding(fdi: int, f: Dict, present: List[int], absent: List[int],
     the composite fact tooth_{fdi}_morphology.with_post_and_core still can,
     and still does.
 
-    The GT has to speak the PREDICTION's vocabulary: evaluate_predictions.py
+    The GT has to speak the PREDICTION's vocabulary: structured_findings_evaluation.py
     compares these strings directly, so a GT still saying "filling" against a
     v7.1 prediction saying "restoration" scores every restored tooth wrong.
     """
@@ -1435,7 +1438,7 @@ def expand_arch(f: Dict, out: Dict) -> Dict:
         # 37 of 142 training and 17 of 31 validate post-and-core teeth had no
         # endo. But consensus_report_facts() unions the readers first, so one
         # reader's "endodontically treated" already answers another's silence.
-        # On the CONSENSUS files -- the ones training reads and survey_facts.py
+        # On the CONSENSUS files -- the ones training reads and structured_findings_evaluation.py
         # scores -- validate was already 17/17 consistent, and re-surveying both
         # baseline arms after this change reproduced their numbers exactly.
         #
@@ -1472,7 +1475,7 @@ def expand_arch(f: Dict, out: Dict) -> Dict:
         # position, and `bone_loss` was worse than defaulted, it was forced
         # ("none" if is_absent) over the arch extent that would otherwise
         # apply. `null` is this file's established word for "the reference
-        # did not answer here": survey_facts.py and evaluate_predictions.py
+        # did not answer here": structured_findings_evaluation.py
         # both drop null-GT pairs, so the metric and docs/vision_sft_plan.md's
         # -100 loss mask end up reading one definition instead of two.
         #
@@ -1522,8 +1525,8 @@ def expand_arch(f: Dict, out: Dict) -> Dict:
                 # used to force: periodontal bone loss is measured around a
                 # root, and "moderate generalized bone loss" is a claim about
                 # the dentition, not about the ridge where 46 used to be.
-                # Free-text `findings` stays empty -- evaluate_predictions.py
-                # skips it as prose either way.
+                # Free-text `findings` stays empty -- no survey reads
+                # prose fields either way.
                 "bone_loss": None if is_absent else f["periodontal_extent"],
                 "furcation_involvement": stated(False), "findings": ""},
             f"tooth_{fdi}_bone_quality": {
@@ -1543,7 +1546,7 @@ def expand_arch(f: Dict, out: Dict) -> Dict:
         #                       never described one. NOT defaulted: the
         #                       prediction is graded per-tooth on an axis the
         #                       reference genuinely left open, and
-        #                       evaluate_predictions drops null-GT pairs.
+        #                       survey_facts drops null-GT pairs.
         #   adjacent_to_teeth -- whether THIS tooth is one the report names as
         #                       reaching the canal. False is the neutral value
         #                       and the report's silence really does mean it:
@@ -1608,7 +1611,7 @@ def expand_to_schema(case_id: str, report_facts: Dict) -> Dict:
                             "unstated": result["unstated"],
                             "conflicts": result["conflicts"],
                             "unlocated": result["unlocated"]}
-    # Not part of the compared shape (evaluate_predictions.py walks the
+    # Not part of the compared shape (structured_findings_evaluation.py walks the
     # schema's own fields), but the record of what the report actually
     # supported -- an arch with a long "unstated" list is a report the
     # extraction could not resolve, and that must be visible, not silent.
@@ -1816,7 +1819,7 @@ def main():
                     help="Use only the FIRST radiologist's report per case and write it "
                         "straight to {case_id}_gt.json. Without this (and without "
                         "--consensus) a multi-report case writes only per-radiologist "
-                        "files, so evaluate_predictions.py -- which looks up "
+                        "files, so structured_findings_evaluation.py -- which looks up "
                         "{case_id}_gt.json -- silently skips it. Cheapest way to get "
                         "one comparable GT file for every case; no consensus is computed.")
     ap.add_argument("--from-report-facts", action="store_true",
@@ -1861,7 +1864,7 @@ def main():
 
         # One report per case: keep the lowest-numbered radiologist and treat
         # the case as single-report, so the extraction lands in
-        # {case_id}_gt.json -- the only name evaluate_predictions.py looks up.
+        # {case_id}_gt.json -- the only name structured_findings_evaluation.py looks up.
         if args.first_report_only:
             radiologist_files = radiologist_files[:1]
 

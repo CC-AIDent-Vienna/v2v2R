@@ -48,13 +48,12 @@
 #   DRY_RUN=1 sbatch code/ground_truth/gen_ground_truth.sh training      # Validate only, no LLM calls
 #   RESUME=1 sbatch code/ground_truth/gen_ground_truth.sh training       # Skip cases already done
 #
-#   # One report per case (cheapest path to one {case_id}_gt.json per case),
-#   # then score a prediction dir against it -- per-category accuracy:
-#   FIRST_REPORT_ONLY=1 EVAL_PRED_DIR=outputs/aksssr_v5_validate/predictions \
-#       sbatch code/ground_truth/gen_ground_truth.sh validate
+#   # One report per case -- the cheapest path to one {case_id}_gt.json per case,
+#   # which is the name every consumer of the ground truth looks up:
+#   FIRST_REPORT_ONLY=1 sbatch code/ground_truth/gen_ground_truth.sh validate
 #
 # WHY FIRST_REPORT_ONLY MATTERS FOR EVALUATION
-#   evaluate_predictions.py looks up exactly one file per case:
+#   structured_findings_evaluation.py looks up exactly one file per case:
 #   {case_id}_gt.json. A multi-report case with neither --consensus nor
 #   --first-report-only writes ONLY {case_id}_{radiologist}_gt.json, so that
 #   case is skipped with no error and the run reports a plausible score over
@@ -78,7 +77,7 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
-PROJECT_DIR="${PROJECT_DIR:-$HOME/V2V2R_ToothFairy4}"
+PROJECT_DIR="${PROJECT_DIR:-$HOME/project_ToothFairy4}"
 CODE_DIR="$PROJECT_DIR/code"
 MODEL_DIR="${MODEL_DIR:-$PROJECT_DIR/models}"
 CONTAINER="${SIF_PATH:-$HOME/containers/extraction.sqsh}"
@@ -140,16 +139,16 @@ CONSENSUS="${CONSENSUS:-}"
 # FIRST_REPORT_ONLY=1 -- extract from one report per case only (the
 # lowest-numbered radiologist), written straight to {case_id}_gt.json.
 # Without it AND without --consensus, a multi-report case writes only
-# {case_id}_{radiologist}_gt.json, which evaluate_predictions.py never looks
-# up -- on validate that silently drops 26 of 40 cases from the evaluation.
+# {case_id}_{radiologist}_gt.json, which structured_findings_evaluation.py never looks up --
+# on validate that silently drops 26 of 40 cases from the evaluation.
 FIRST_REPORT_ONLY="${FIRST_REPORT_ONLY:-}"
 
-# EVAL_PRED_DIR=<dir> -- after extraction, score that prediction dir against
-# the ground truth just built (per-category accuracy, evaluate_predictions.py).
-# Pure CPU, no model, so it runs on the same allocation after vLLM is stopped.
-# Empty (the default) keeps this script's original GT-only behaviour.
-EVAL_PRED_DIR="${EVAL_PRED_DIR:-}"
-EVAL_OUT="${EVAL_OUT:-}"
+# This script BUILDS ground truth; it does not score against it. Scoring is
+# code/eval/structured_findings_evaluation.py, which reads a whole run dir and reports the
+# prediction and the summary side by side -- run it from
+# code/pipeline/postprocess/postprocess_now.sh, on CPU, as often as you like.
+# An opt-in scoring stage used to live here and was never once switched on in
+# 11 runs, so it went with evaluate_predictions.py.
 
 # --consensus can also be passed as a positional flag after the split, to
 # match how this script has always been invoked.
@@ -218,7 +217,8 @@ echo "[INFO] python3: $(command -v python3)"
 
     if [ ! -d "$REPORTS_DIR" ]; then
         echo "[FAIL] Reports directory not found: $REPORTS_DIR"
-        echo "[HINT] Expected dataset/$SPLIT/reports/ to hold the reference reports"
+        echo "[HINT] Expected dataset/$SPLIT/reports/ to hold the reference reports,"
+        echo "[HINT] one {case}_{n}.txt per radiologist."
         exit 1
     fi
 
@@ -427,85 +427,6 @@ echo "[INFO] python3: $(command -v python3)"
     fi
     echo ""
 
-    # ── Per-category accuracy (optional; EVAL_PRED_DIR=<dir>) ────────────────
-    # evaluate_predictions.py needs no GPU and no model -- it walks the schema
-    # comparing each {case_id}_pred.json against {case_id}_gt.json. Stop vLLM
-    # first so the GPU is released while this CPU-only stage runs.
-
-    if [ -z "$EVAL_PRED_DIR" ]; then
-        echo "[INFO] EVAL_PRED_DIR not set -- skipping per-category evaluation."
-        echo ""
-    else
-        cleanup   # release the GPU before the CPU-only stage
-
-        case "$EVAL_PRED_DIR" in
-            /*) : ;;
-            *) EVAL_PRED_DIR="$PROJECT_DIR/$EVAL_PRED_DIR" ;;
-        esac
-        [ -z "$EVAL_OUT" ] && EVAL_OUT="$OUT_DIR/evaluation/evaluation_$(date +%Y%m%d_%H%M%S).json"
-        mkdir -p "$(dirname "$EVAL_OUT")"
-
-        echo "[INFO] ========== Per-Category Evaluation =========="
-        echo "[INFO] Predictions: $EVAL_PRED_DIR"
-        echo "[INFO] Ground truth: $GT_DIR"
-        echo "[INFO] Output: $EVAL_OUT"
-
-        if [ ! -d "$EVAL_PRED_DIR" ]; then
-            echo "[FAIL] Prediction dir not found: $EVAL_PRED_DIR"
-            echo "[FAIL] Ground truth WAS written to $GT_DIR -- rerun the evaluation alone with:"
-            echo "[FAIL]   python code/eval/evaluate_predictions.py --pred-dir <dir> \\"
-            echo "[FAIL]       --gt-dir $GT_DIR --schema $SCHEMA --out $EVAL_OUT"
-            exit 1
-        fi
-
-        NUM_PREDS=$(find "$EVAL_PRED_DIR" -maxdepth 1 -name "*_pred.json" | wc -l)
-        NUM_GT=$(find "$GT_DIR" -maxdepth 1 -name "*_gt.json" ! -regex '.*_[^_]*_gt\.json$' | wc -l)
-        echo "[INFO] $NUM_PREDS prediction(s) vs $NUM_GT case-level GT file(s)"
-        if [ "$NUM_PREDS" -eq 0 ]; then
-            echo "[FAIL] No *_pred.json in $EVAL_PRED_DIR -- did the v5 pipeline finish?"
-            exit 1
-        fi
-        # Every prediction without a matching {case_id}_gt.json is skipped
-        # silently by evaluate_predictions.py, which then reports a healthy
-        # score over a fraction of the set. Name them here instead.
-        MISSING=0
-        for p in "$EVAL_PRED_DIR"/*_pred.json; do
-            cid=$(basename "$p" _pred.json)
-            [ -f "$GT_DIR/${cid}_gt.json" ] || { echo "[WARN] no GT for $cid"; MISSING=$((MISSING + 1)); }
-        done
-        # A warning is not enough here. Job 549067 extracted GT for only 2 of
-        # 36 cases (every other case died on a per-case [ERROR]), then scored
-        # those 2, printed [PASS] and exited 0 -- a green job whose evaluation
-        # covered 6% of the split. Partial coverage must be opted into.
-        if [ "$MISSING" -gt 0 ]; then
-            echo "[WARN] $MISSING/$NUM_PREDS prediction(s) have no case-level GT."
-            if [ -z "${ALLOW_PARTIAL_GT:-}" ]; then
-                echo "[FAIL] Refusing to report an evaluation over $((NUM_PREDS - MISSING))/$NUM_PREDS cases."
-                echo "[FAIL] Search this log for '[ERROR]' for the per-case extraction cause."
-                echo "[FAIL] Set ALLOW_PARTIAL_GT=1 to score the available cases anyway."
-                exit 1
-            fi
-            echo "[WARN] ALLOW_PARTIAL_GT=1 -- scoring the remaining $((NUM_PREDS - MISSING)) case(s) only."
-        fi
-        echo ""
-
-        STATUS=0
-        python3 "$CODE_DIR/eval/evaluate_predictions.py" \
-            --pred-dir "$EVAL_PRED_DIR" \
-            --gt-dir "$GT_DIR" \
-            --schema "$SCHEMA" \
-            --out "$EVAL_OUT" \
-            ${CASE_IDS:+--case-ids $CASE_IDS} || STATUS=$?
-
-        echo ""
-        if [ "$STATUS" -ne 0 ]; then
-            echo "[FAIL] evaluate_predictions.py exited $STATUS"
-            echo "[FAIL] Ground truth is intact in $GT_DIR -- only the scoring step failed."
-            exit 1
-        fi
-        echo "[PASS] Per-category evaluation written to $EVAL_OUT"
-        echo ""
-    fi
 
     echo "[INFO] ========== Job Complete =========="
     echo "[INFO] End: $(date)"

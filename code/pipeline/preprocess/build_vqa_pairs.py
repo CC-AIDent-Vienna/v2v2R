@@ -60,7 +60,7 @@ Usage:
         --schema schema/schema.json \
         --images-dir test_5/outputs/images \
         --out test_5/outputs/qa_pairs.jsonl \
-        --project-dir $HOME/V2V2R_ToothFairy4
+        --project-dir $HOME/project_ToothFairy4
 """
 
 import json

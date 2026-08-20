@@ -51,7 +51,7 @@
 
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-$HOME/V2V2R_ToothFairy4}"
+PROJECT_DIR="${PROJECT_DIR:-$HOME/project_ToothFairy4}"
 MODEL_DIR="${MODEL_DIR:-$PROJECT_DIR/models}"
 CONTAINER="${SIF_PATH:-$HOME/containers/vllm019_cu128.sqsh}"
 export PYTHONUNBUFFERED=1     # see the note in code/train/draft_evidence.sh
@@ -157,7 +157,7 @@ conda activate "$CONDA_ENV"
 python3 code/pipeline/postprocess/postprocess_pred.py --pred-dir "$OUT_DIR/predictions" \
         --out-dir "$OUT_DIR/summaries"
 mkdir -p "$OUT_DIR/survey"
-python3 code/eval/survey_facts.py "$OUT_DIR" --gt-dir "$GT_DIR" \
+python3 code/eval/structured_findings_evaluation.py "$OUT_DIR" --gt-dir "$GT_DIR" \
         --schema schema/schema.json \
         --json-out "$OUT_DIR/survey/survey_facts.json" \
         | tee "$OUT_DIR/survey/survey_facts.txt"

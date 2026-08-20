@@ -64,6 +64,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+
 # Repo bootstrap. Finds code/ by walking up for _repo.py, so this file does not
 # care how deep it sits, and puts every code group on sys.path so the flat
 # `import postprocess_pred` works across groups. See code/_repo.py.
@@ -74,6 +75,7 @@ _sys.path.insert(0, str(next(
     if (p / "_repo.py").is_file())))
 from _repo import REPO_ROOT, add_code_paths  # noqa: E402
 add_code_paths()
+
 from postprocess_pred import postprocess_prediction  # noqa: E402
 
 # generate_report_from_pred is NOT imported here. It is the LLM report writer,
@@ -183,8 +185,8 @@ def call_vllm_messages(client, model: str, messages: list,
 
     Split out of call_vllm() so a caller can express turn structures the
     two-turn [system, user] shape cannot -- specifically the few-shot layout
-    [system, ex_user, ex_assistant, ..., query_user] that the few-shot
-    probe arm sends. The pipeline itself still goes through
+    [system, ex_user, ex_assistant, ..., query_user] that
+    code/arms/fewshot_probe.py sends. The pipeline itself still goes through
     call_vllm() below and is unaffected: same retry, same structured
     decoding, same reasoning_content fallback, same Optional[str] return.
 
@@ -791,7 +793,7 @@ def build_user_blocks(images: Dict[str, str], captions: Dict[str, str],
     call's images exist on disk (nothing to send).
 
     Split out of infer_call so anything that needs a turn in the pipeline's
-    exact shape -- notably the few-shot probe arm, which wraps several of
+    exact shape -- notably code/arms/sinus_fewshot_probe.py, which wraps several of
     them into a few-shot conversation -- gets it from here instead of
     re-deriving the template's format keys and drifting the moment the template
     changes. build_call_prompt() below is the call-entry-shaped face of it.
@@ -835,7 +837,7 @@ def build_call_prompt(call_data: dict, user_template: str,
 
     The call-entry-shaped face of build_user_blocks(): anything that needs the
     EXACT prompt the pipeline would send can get it without re-deriving it.
-    The few-shot probe arm replays these blocks as both its query turn and its
+    code/arms/fewshot_probe.py replays these blocks as both its query turn and its
     exemplar turns, and --dump-prompt diffs them against a stored model_input
     dump. Re-deriving the prompt from schema.json instead would let the two
     drift apart on the next schema edit, which is precisely what the few-shot
@@ -1169,7 +1171,7 @@ _EMIT_LOCK = threading.Lock()
 def _install_stderr_router() -> _ThreadRoutedStderr:
     """Install the router on first use, not at import.
 
-    The few-shot probe arm imports this module for build_call_prompt() and
+    code/arms/fewshot_probe.py imports this module for build_call_prompt() and
     parse_json(); replacing sys.stderr as an import side effect would change
     its logging too, for no reason. Only the batched path needs it.
     """
@@ -1652,7 +1654,7 @@ if __name__ == "__main__":
               file=sys.stderr)
         for case_id, err in REPORT_FAILURES:
             print(f"[WARN]   {case_id}: {err}", file=sys.stderr)
-        print("[WARN] Re-run just the report stage on the existing predictions",
+        print("[WARN] Re-run just the report stage on the existing predictions with:",
               file=sys.stderr)
-        print("[WARN]   with code/pipeline/postprocess/postprocess_now.sh <run_dir>",
-              file=sys.stderr)
+        print("[WARN]   python code/arms/generate_report_from_pred.py --pred-dir <dir> "
+              "--out-dir <dir> --vllm-url ... --model ...", file=sys.stderr)

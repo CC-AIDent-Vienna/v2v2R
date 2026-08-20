@@ -1,10 +1,3 @@
-<!-- Research record from the ToothFairy4 / ODIN2026 work, shipped as-is.
-
-It documents a search, not a finished design: arms discussed here were measured
-and abandoned, and it cites modules that implemented them which this repository
-does not contain. Paths to files that ARE here have been updated to this
-repo's layout; the rest are left as written. -->
-
 # Post-processing and report synthesis
 
 Everything downstream of the VLM: `postprocess_pred.py` → `source_rules.py` →
@@ -27,7 +20,7 @@ by an older postprocess and scores 0.4557 — see *Report level* below.
 > `git log -- docs/postprocess_pipeline.md` has them.
 
 Fact-level
-numbers come from `survey_facts.py` / `compare_sources.py` against the generated
+numbers come from `structured_findings_evaluation.py` / `compare_sources.py` against the generated
 ground truth, report-level numbers from `official_ranking.py` against the
 reference reports.
 
@@ -49,7 +42,7 @@ reference reports.
 > load-bearing survived in place: the silencing rule and the ≥0.35 precision bar
 > it produced (*What reaches the report*). The facts-file provenance went with
 > it — it belongs to the facts pool, not to postprocessing;
-> `jobs/competition_sim.sh`'s header is where that lives.
+> `code/competition/competition_sim.sh`'s header is where that lives.
 > `git log -- docs/postprocess_pipeline.md` has the rest.
 
 ## 1. Per-source accuracy — which source knows what
@@ -57,23 +50,23 @@ reference reports.
 The pipeline's own instruments treat it as one voice: `PRED` (all reads
 unioned) against `SUMMARY` (after the vote). That collapse hides which *read*
 earned a number, and therefore which source a rule should trust.
-`code/compare_sources.py` splits it — one row per finding, one column per
+`code/eval/compare_sources.py` splits it — one row per finding, one column per
 source: the mask-derived **facts** (see below), the three image reads (**3d**,
 **panoramic**, **detail**, plus **sinus**), then `PRED` and `SUMMARY` as
 before. It reuses `pred_claims()`'s existing per-source tags, so the split
 cannot drift from what the pipeline consumes, and its `PRED`/`SUMMARY` columns
-reproduce `survey_facts.py`'s OVERALL table exactly — which is the check that
+reproduce `structured_findings_evaluation.py`'s OVERALL table exactly — which is the check that
 it is the same measurement, only disaggregated.
 
 ```bash
-python3 code/compare_sources.py outputs/aksssr_v7_trained_arm6_validate --split validate
+python3 code/eval/compare_sources.py outputs/aksssr_v7_trained_arm6_validate --split validate
 # -> <run>/survey/source_compare_<stamp>.{txt,json}
 ```
 
 **The `facts` column is `dataset/$SPLIT/facts/<case>.json`, and it is a function
 of the segmentation mask** — `extract_facts.py` over the mask reproduces the
 upstream file byte for byte, and no report was ever read to build it
-(`jobs/competition_sim.sh`'s header has the provenance and the check). Two
+(`code/competition/competition_sim.sh`'s header has the provenance and the check). Two
 consequences every rule rests on: scoring it against report-derived ground
 truth is not circular, and the competition container can compute it from a CBCT
 with no report in the room.
@@ -82,7 +75,7 @@ The facts file already had one consumer before any of this —
 `validate_summary_with_facts.py`, a drop-only gate that removes summary claims
 the mask contradicts and adds nothing. It is **not in the current path**;
 `postprocess_now.sh` runs `postprocess_pred.py --facts-dir` → `source_rules.py`,
-and the gate is reached only by the older `jobs/postprocess_val_now.sh`. It is
+and the gate is reached only by the older `code/arms/postprocess_val_now.sh`. It is
 named below because every rule here argues against its asymmetry.
 
 Measured on **arm 6**, against the generated ground truth, on **validate-40**.
@@ -784,8 +777,8 @@ but it is the model's answer to a question about the acquisition, and *THE RULE
 — maxilla FOV scope* is why that answer is no longer trusted anywhere.
 
 Two scripts produce every number below, both facts-and-reports only — no
-inference run, so both splits are in scope: `code/survey_upper_mentions.py`
-reads the report text, `code/absent_fov_gate_evidence.py` scores the candidate
+inference run, so both splits are in scope: `code/studies/survey_upper_mentions.py`
+reads the report text, `code/studies/absent_fov_gate_evidence.py` scores the candidate
 gates. Neither writes anything.
 
 #### First, a scoring hazard: the GT cannot referee this rule unaided
@@ -809,14 +802,14 @@ positions this rule argues about, so every number below is given twice:
 | **report-settled** | only positions a report **names**, plus an arch it calls completely edentulous (`alveolar_atrophy == "fully_edentulous"`, which is how *"Completely edentulous maxilla"* is recorded). A maxilla called unassessable settles nothing |
 
 The ground truth is **not** changed by any of this — `report_answered()` in
-`code/absent_fov_gate_evidence.py` re-derives the stricter set at scoring time
+`code/studies/absent_fov_gate_evidence.py` re-derives the stricter set at scoring time
 from `{case}_report_facts.json`, which is the extraction of the report text, not
 the filled-in GT.
 
 #### The evidence — what the reports actually say when the maxilla is excluded
 
 The cleanest evidence touches no GT at all: read the 1000 reference reports and
-ask whether the upper arch is mentioned. `python3 code/survey_upper_mentions.py`,
+ask whether the upper arch is mentioned. `python3 code/studies/survey_upper_mentions.py`,
 classifying each report by whether it names an FDI in 11–18 / 21–28:
 
 | `fov.maxilla` | reports | names upper teeth | arch statement only | silent on the upper arch | upper FDIs named |
@@ -983,7 +976,7 @@ list:
 |---|---|---|
 | `postprocess_pred.collect_arch_absent()` | derives absence from `detected == "no_image"` (0.50 prec), then `eruption_state`, then the arch map | unchanged, then **overwritten** by `apply_absent` with `absent(case)`, `source: "facts.teeth_absent, FOV-gated"` |
 | `postprocess_pred.toothless_fdis()` | gates on that derived list | unchanged, then `_gate_on_absent` re-gates on `absent(case)`, which is the stricter pass |
-| `validate_summary_with_facts.py` `absent` rule | gated on raw `teeth_absent`, ungated | **not in the path** — that gate is reached only by `jobs/postprocess_val_now.sh`, the older arm-building script |
+| `validate_summary_with_facts.py` `absent` rule | gated on raw `teeth_absent`, ungated | **not in the path** — that gate is reached only by `code/arms/postprocess_val_now.sh`, the older arm-building script |
 
 **The gate runs last, and that ordering is load-bearing.** It sat inside
 `apply_absent` first — i.e. before the rules that re-source the per-tooth
@@ -1813,7 +1806,7 @@ change neither improves nor worsens it.
 
 #### What it does to absent teeth: nothing, and that is the interesting part
 
-`survey_facts.py` against the same ground truth, summary column:
+`structured_findings_evaluation.py` against the same ground truth, summary column:
 
 | split | absent teeth, before | after |
 |---|---|---|
@@ -1954,7 +1947,7 @@ preflight, and compute nodes are not guaranteed outbound HTTPS.
 ```bash
 ssh hpc
 source ~/miniconda3/etc/profile.d/conda.sh && conda activate cbct_base
-cd ~/V2V2R_ToothFairy4
+cd ~/project_ToothFairy4
 
 # postprocess + synthesize + survey, from an existing predictions/ dir.
 # --facts-dir (hence the source rules) is on by default.
@@ -1963,7 +1956,7 @@ NO_SOURCE_RULES=1 code/pipeline/postprocess/postprocess_now.sh <run_dir>   # reb
 
 # free, deterministic, and the right way to choose between arms
 NO_RADFACT=1 OUT_DIR=<run_dir>/rank_norad_ \
-  bash jobs/evaluation.sh validate <run_dir>/synthesized_reports
+  bash code/eval/evaluation.sh validate <run_dir>/synthesized_reports
 
 # the official number: persistent qwen3-14b judge on an A100
 sbatch --partition=gpu --qos=a100 --gres=gpu:a100:1 code/eval/judge_server.sh
@@ -2037,7 +2030,7 @@ costs nothing it was getting right and recovers the 4 sides it left unanswered �
 | **2026-08-17 07:12** | official ranking of **arm 6** → **0.4557**, the new best; clinical F1 0.5014 with precision and recall both up on the previous arm, captioning flat |
 | **2026-08-17** | the abnormal-class view added for the six arch/side rows. `periodontal resorpt.` and `bone quality` are at or below their trivial constants — the proof they stay silenced. `atrophy` is the opposite and earns its `on`. `sinus mucosa`/`content` are the always-normal constants exactly. **Sinus `scope` measures nothing**: its GT is `_resolve_scope`'s fallback on 80/80 sides, so PRED 1.00 is a constant matching a constant |
 | **2026-08-17** | **THE RULE — maxilla FOV scope**: the arch gate reads `facts.fov.maxilla` instead of the model's answer. Gate accuracy 0.850 → 0.875 on validate, on all three model arms tested; a 12–12 tie on 550 training cases. It also recovered the only two correct sinus reads postprocess was discarding |
-| **2026-08-17** | **THE RULE — absent teeth re-stated as a filter on *unassessable* positions**, and its FOV gate re-measured on all 622 cases. Two findings. (i) **The GT cannot referee this rule unaided**: `presence_enumerated` fill-in turns 2072 of the 2491 GT-answered upper positions in excluded cases into labels no report ever stated (141 arch blocks name no tooth yet carry a `presence_enumerated` verdict), which is where the old 0.07-vs-0.68 precision gap came from. Scored on report-settled positions only, the gap is 0.46 vs 0.82 and the gate is a fact-level **wash** — F1 0.858 shipped against 0.860 ungated, 56 true positives traded for 66 false ones. (ii) **The report survey is the evidence that stands**: with the maxilla excluded, 77% of reports make only an arch statement and 13% are silent; 15% of cases name an upper tooth at all and **5% call one absent**, against 26% where the maxilla is imaged. The gate stays — 1904 of the mask's 2026 upper absence claims land on positions no report settles, which fact-level scoring drops and RadFact charges. Narrower gates rejected: case-1-only (0.860, no report evidence in that bucket), ≤4 stratum (0.863, noise on 33 claims), gating an edentulous imaged maxilla (0.850, deletes A018). **No code change** — `source_rules.absent_list` already implements the winner. New: `code/survey_upper_mentions.py`, `code/absent_fov_gate_evidence.py` |
+| **2026-08-17** | **THE RULE — absent teeth re-stated as a filter on *unassessable* positions**, and its FOV gate re-measured on all 622 cases. Two findings. (i) **The GT cannot referee this rule unaided**: `presence_enumerated` fill-in turns 2072 of the 2491 GT-answered upper positions in excluded cases into labels no report ever stated (141 arch blocks name no tooth yet carry a `presence_enumerated` verdict), which is where the old 0.07-vs-0.68 precision gap came from. Scored on report-settled positions only, the gap is 0.46 vs 0.82 and the gate is a fact-level **wash** — F1 0.858 shipped against 0.860 ungated, 56 true positives traded for 66 false ones. (ii) **The report survey is the evidence that stands**: with the maxilla excluded, 77% of reports make only an arch statement and 13% are silent; 15% of cases name an upper tooth at all and **5% call one absent**, against 26% where the maxilla is imaged. The gate stays — 1904 of the mask's 2026 upper absence claims land on positions no report settles, which fact-level scoring drops and RadFact charges. Narrower gates rejected: case-1-only (0.860, no report evidence in that bucket), ≤4 stratum (0.863, noise on 33 claims), gating an edentulous imaged maxilla (0.850, deletes A018). **No code change** — `source_rules.absent_list` already implements the winner. New: `code/studies/survey_upper_mentions.py`, `code/studies/absent_fov_gate_evidence.py` |
 | **2026-08-17** | **document re-based on arm 6.** Every table re-measured on `vsft_arm6/val_arm6`; the superseded arm's numbers removed rather than kept beside them; every training-split section emptied, because arm 6 has no training-split inference |
 | **2026-08-17 22:52** | **official ranking of arm 6 re-run after the day's postprocess work → 0.4658**, the final number. Same checkpoint, byte-identical predictions; the condyle, maxilla-FOV and atrophy commits are worth **+0.0101**, all clinical — F1 0.5014 → 0.5139, recall +0.031 against precision −0.010, captioning flat. Scored into `outputs/aksssr_v7_trained_arm6_validate/`, which is where the reports now live |
 
@@ -2059,7 +2052,7 @@ ranking are in `outputs/aksssr_v7_trained_arm6_validate/`, from the 22:52 re-run
 | **official ranking — 0.4658 (the number)** | `aksssr_v7_trained_arm6_validate/official_ranking/official_ranking_20260817_225249.json` |
 | superseded ranking — 0.4557 | `vsft_arm6/val_arm6/official_ranking/official_ranking_20260817_071205.json` |
 | **source comparison** | `val_arm6/survey/source_compare_20260817_063758.{txt,json}` |
-| fact-level survey, with the rules | `val_arm6/survey/survey_facts_20260817_063256.{txt,json}` |
+| fact-level survey, with the rules | `val_arm6/survey/structured_findings_evaluation_20260817_063256.{txt,json}` |
 | fact-level survey, as scored by `pool_infer.sh` | `val_arm6/survey/survey_facts.{txt,json}` |
 | held-out 22 (tooth-calls-only payload) | `ho_awq_arm6/` |
 | the merged servable checkpoint | `models/Qwen3.5-9B-AWQ-dental-cbct-sft` (promoted by rename 2026-08-17) |
@@ -2135,7 +2128,7 @@ before claiming the VLM earns its cost** — that run has not happened.
 
 **Item 1: run arm 6 on the training split.** Everything else on this list is
 downstream of it. It is one inference job; the CPU half — `postprocess_now.sh`,
-`compare_sources.py --split training`, `survey_facts.py` — is seconds. Until it
+`compare_sources.py --split training`, `structured_findings_evaluation.py` — is seconds. Until it
 exists, every number in this document is 40 cases.
 
 What it would settle, in the order the margins deserve:

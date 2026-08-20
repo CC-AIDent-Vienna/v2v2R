@@ -169,6 +169,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+
 # Repo bootstrap. Finds code/ by walking up for _repo.py, so this file does not
 # care how deep it sits, and puts every code group on sys.path so the flat
 # `import postprocess_pred` works across groups. See code/_repo.py.
@@ -179,6 +180,7 @@ _sys.path.insert(0, str(next(
     if (p / "_repo.py").is_file())))
 from _repo import REPO_ROOT, add_code_paths  # noqa: E402
 add_code_paths()
+
 from normalize_pred import (DEFAULT_SCHEMA, normalize_prediction,  # noqa: E402
                             summarize_repairs)
 import source_rules  # noqa: E402  -- the source rules, applied as a post-pass
@@ -607,7 +609,7 @@ REQUIRE_CROSS_SOURCE_AGREEMENT = False
 # disagreement is evidence against the finding. For impaction they are not,
 # and the gate inverts quality instead of filtering it. Measured on
 # outputs/aksssr_v5_validate against the 32 impacted teeth the reference
-# reports state (code/eval/survey_findings.py --category impaction):
+# reports state (survey_findings.py --category impaction):
 #
 #     source      claims   correct   precision
 #     3d_render       74        21        0.28
@@ -644,7 +646,7 @@ CROSS_VALIDATE_IMPACTION = False
 #
 # Impaction was exempted above because the gate cost recall and bought no
 # precision. Measuring the other gated findings the same way
-# (code/eval/survey_findings.py, outputs/aksssr_v5_validate, summary stage):
+# (survey_findings.py, outputs/aksssr_v5_validate, summary stage):
 #
 #     finding      gate ON                    gate OFF
 #                  claims tp prec  rec        claims tp prec  rec
@@ -1435,7 +1437,7 @@ def build_sinus_group(right_fact: Optional[Dict], left_fact: Optional[Dict]) -> 
             # summary "what did the model say about the right sinus mucosa?"
             # got nothing back for exactly the cases where it had an answer.
             # That cost 10 of 26 report-stated sides in the survey
-            # (code/eval/survey_findings.py) -- read as unanswered when they were
+            # (survey_findings.py) -- read as unanswered when they were
             # answered. A summary is the structured record, so it carries
             # what was read; grouping is the renderer's job, not the
             # record's.
@@ -1872,7 +1874,7 @@ def build_impacted_teeth(teeth: Dict, fdi_list: List[int],
     consulted even when an older prediction file still carries it. It was
     dropped from the schema as unreliable, which the survey bears out: on
     outputs/aksssr_v5_validate it made 18 impaction claims and got 0 of them
-    right (code/eval/survey_findings.py --category impaction). Reading it from
+    right (survey_findings.py --category impaction). Reading it from
     legacy predictions would put those 18 known-false claims straight into the
     report, since impaction no longer passes through the agreement gate.
 
@@ -2166,7 +2168,7 @@ def build_implants(fact: Dict, notes: Optional[List[str]] = None,
 #
 # MEASURED, and kept ON -- unlike the cross-source gates above, this one pays
 # for itself. Across outputs/aksssr_v5_validate it drops 9 implants, and
-# checking each against the reports (code/eval/survey_findings.py):
+# checking each against the reports (survey_findings.py):
 #   correctly dropped (6) -- A008/45, A019/46, A019/25, A041/13, A041/21,
 #     F041/26: no report places an implant at any of these.
 #   wrongly dropped (3)  -- A037/17, S0000/42, S0000/44: the reports do state
@@ -2689,8 +2691,8 @@ def primary_teeth_of(fact) -> List[int]:
     """
     primary_teeth_{arch} is an OBJECT in v6.1 ({visual_evidence,
     primary_teeth}), where v4 had a bare list[int]. Both shapes are accepted:
-    evaluate_predictions.py feeds this function ground-truth extractions that
-    may still be in the old shape, and reading the object as a list produced
+    ground-truth files written before the shape change reach this function
+    still in the old shape, and reading the object as a list produced
     an empty primary dentition (and so "permanent" for every mixed-dentition
     child).
     """

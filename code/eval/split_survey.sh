@@ -20,7 +20,7 @@
 # an honest generalisation signal; if it tracks `trained`, then watching it
 # during training leaked more than intended.
 #
-# CPU only, seconds. survey_facts.py takes --case-ids, so nothing is copied or
+# CPU only, seconds. structured_findings_evaluation.py takes --case-ids, so nothing is copied or
 # symlinked and all three read the one predictions dir.
 #
 #   code/eval/split_survey.sh outputs/training_results/vsft_arm5/train_arm5
@@ -52,7 +52,7 @@ for split in trained evalonly unseen; do
     echo ""
     echo "===== $split -- $have of $n case(s) present ====="
     [ "$have" -eq 0 ] && { echo "[WARN] nothing to score, skipping"; continue; }
-    python3 code/eval/survey_facts.py "$RUN_DIR" \
+    python3 code/eval/structured_findings_evaluation.py "$RUN_DIR" \
         --gt-dir "$GT_DIR" --schema "$SCHEMA" \
         --case-ids $(grep -vE '^\s*(#|$)' "$list" | tr '\n' ' ') \
         --json-out "$RUN_DIR/survey/survey_${split}.json" \
