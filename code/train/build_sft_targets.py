@@ -2,7 +2,7 @@
 """
 build_sft_targets.py -- tooth-composite calls + generated GT -> SFT rows.
 
-docs/vision_sft_plan.md §3. One row per tooth call: the exact prompt the pipeline
+docs/vision_sft_plan_stale.md §3. One row per tooth call: the exact prompt the pipeline
 would send, the answer the reference reports support, and a per-field decision
 about which of those fields may contribute loss.
 

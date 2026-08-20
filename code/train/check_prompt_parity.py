@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-check_prompt_parity.py -- docs/vision_sft_plan.md §3.4's acceptance test.
+check_prompt_parity.py -- docs/vision_sft_plan_stale.md §3.4's acceptance test.
 
 Render one tooth call through the TRAINING path and through the SERVING path
 and require identical token ids. A token-id diff, not a text diff: the failures

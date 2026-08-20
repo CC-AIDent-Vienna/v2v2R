@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# code/train/prompt_parity.sh -- docs/vision_sft_plan.md §3.4, and it runs before stage B.
+# code/train/prompt_parity.sh -- docs/vision_sft_plan_stale.md §3.4, and it runs before stage B.
 #
 # Boots the STUDENT and asks it to tokenize the exact conversation the training
 # collator builds, then requires the two token-id sequences to be equal. Not a

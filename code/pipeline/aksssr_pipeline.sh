@@ -633,7 +633,7 @@ fi
     # Lifted from code/competition/competition_runner.py, where the same overlap is what
     # makes one case fit in 15 minutes. There it is the whole game (5+10 -> 10);
     # here it is ~20 minutes off every arm's inference job, which over the five
-    # arms of docs/vision_sft_plan.md is worth having.
+    # arms of docs/vision_sft_plan_stale.md is worth having.
     #
     # Ordering constraints this respects:
     #   * the container / model existence checks stay AHEAD of the launch, so a

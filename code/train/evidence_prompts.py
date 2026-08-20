@@ -2,7 +2,7 @@
 """
 code/train/evidence_prompts.py -- the two prompts of the evidence pass.
 
-docs/vision_sft_plan.md §3.3 is one idea run twice, by two different models, and
+docs/vision_sft_plan_stale.md §3.3 is one idea run twice, by two different models, and
 these are the words each is given:
 
   DRAFT_SYSTEM + DRAFT_USER_TEMPLATE   the TEACHER is handed a finished answer

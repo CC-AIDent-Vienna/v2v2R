@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-train_vision_lora.py -- the arms of docs/vision_sft_plan.md §2, trained.
+train_vision_lora.py -- the arms of docs/vision_sft_plan_stale.md §2, trained.
 
     python code/train/train_vision_lora.py --arm vision+merger --rows sft_wide.jsonl \\
         --out outputs/vsft_arm2 --epochs 2

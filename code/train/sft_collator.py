@@ -2,7 +2,7 @@
 """
 sft_collator.py -- an SFT row -> input_ids, per-token labels, per-token weights.
 
-docs/vision_sft_plan.md open item 9. Everything §3 produces is a FIELD-level
+docs/vision_sft_plan_stale.md open item 9. Everything §3 produces is a FIELD-level
 decision; this is what turns it into `-100` spans and a weight vector, which is
 the only place those decisions become gradient.
 

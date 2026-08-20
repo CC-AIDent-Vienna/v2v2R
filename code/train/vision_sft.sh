@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# code/train/vision_sft.sh -- docs/vision_sft_plan.md stage B onward. STAGE picks the step.
+# code/train/vision_sft.sh -- docs/vision_sft_plan_stale.md stage B onward. STAGE picks the step.
 #
 #   STAGE=probe sbatch code/train/vision_sft.sh          # open item 3 / R3, ~2 min
 #   STAGE=smoke sbatch code/train/vision_sft.sh          # stage B: overfit 200 calls

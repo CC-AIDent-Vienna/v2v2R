@@ -138,7 +138,7 @@ WORKERS="${WORKERS:-4}"
 # schema asks for every image and build_vqa_pairs.py drops a call whose images
 # are missing, so a partial images dir silently produces a smaller payload.
 #
-# STEPS=tooth exists for docs/vision_sft_plan.md, whose scope (§1) is the per-tooth
+# STEPS=tooth exists for docs/vision_sft_plan_stale.md, whose scope (§1) is the per-tooth
 # composite call alone. Training targets are built from the tooth rows only, so
 # the other three generators would cost ~3.5 of every 4 minutes per case to
 # render images nothing in that experiment reads. On the 144-case SFT pool that

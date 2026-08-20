@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The LoRA arm table, and the assertion that a config actually hit its targets.
 
-Single source of truth for `docs/vision_sft_plan.md` §2. `train_vision_lora.py`
+Single source of truth for `docs/vision_sft_plan_stale.md` §2. `train_vision_lora.py`
 imports ARMS from here and calls assert_arm() before it touches a GPU, so the
 declared parameter count is checked in exactly one place.
 

@@ -2,7 +2,7 @@
 """
 sft_prompt.py -- one SFT row -> the exact messages the pipeline would send.
 
-docs/vision_sft_plan.md §3.4. This is the ONLY place that turns a row of
+docs/vision_sft_plan_stale.md §3.4. This is the ONLY place that turns a row of
 `sft_*.jsonl` into a chat conversation, and both sides of the experiment go
 through it: check_prompt_parity.py compares its output against vLLM's own
 tokenizer, and train_vision_lora.py's collator builds its training text from
