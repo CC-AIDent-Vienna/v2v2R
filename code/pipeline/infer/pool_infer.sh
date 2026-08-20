@@ -5,14 +5,16 @@
 # One model, one qa_pairs.jsonl, the full call the pipeline actually sends,
 # scored per field against the generated GT. That is the whole job.
 #
-# WHY THIS IS NOT code/pipeline/aksssr_pipeline.sh
-# ---------------------------------------
-# That script is organised around a SPLIT: it discovers cases, renders images,
-# rebuilds qa_pairs.jsonl and then infers. Here the payload already exists --
-# outputs/training_results/vsft_pool_training/qa_pairs.jsonl, the 120-case SFT
-# pool, tooth calls only -- and the variable under test is the MODEL. Rebuilding
-# the payload per model would reintroduce the one thing every arm comparison
-# must not have: a difference in what was asked.
+# WHY IT TAKES A PAYLOAD RATHER THAN A SPLIT
+# ------------------------------------------
+# A driver organised around a split discovers cases, renders images, rebuilds
+# qa_pairs.jsonl and then infers. Here the payload already exists -- it comes
+# from gen_images_cpu.sh, or from an earlier run -- and the variable under test
+# is the MODEL. Rebuilding the payload per model would reintroduce the one
+# thing every arm comparison must not have: a difference in what was asked.
+#
+# The default QA_JSONL is the 120-case SFT pool, tooth calls only. For a whole
+# split, pass the qa_pairs.jsonl gen_images_cpu.sh wrote next to its images.
 #
 # WHY THE FULL CALL AND NOT ONE FIELD
 # -----------------------------------

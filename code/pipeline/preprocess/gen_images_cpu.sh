@@ -4,8 +4,8 @@
 #
 # Why this exists
 # ---------------
-# code/pipeline/aksssr_pipeline.sh holds an a100 allocation for its whole run, but only
-# steps 6-8 (vLLM preflight / server / inference) actually touch the GPU.
+# A batch run holds its a100 allocation from the first case to the last, but
+# only the vLLM half (preflight / server / inference) actually touches the GPU.
 # Steps 1-4 are nibabel + numpy + PIL + marching cubes -- ~4 min/case, so
 # ~3 h of a 40-case run, all of it spent with an idle A100 attached. When the
 # gpu/a100 queue is deep, that time is paid twice: once waiting in PD for a GPU
@@ -16,18 +16,18 @@
 # shorter), writing into the SAME outputs/${RUN_NAME}_${SPLIT}/images directory
 # the pipeline uses. It is not a separate arm: same four generators, same facts
 # arguments, same output filenames, so the images are the ones the pipeline
-# would have produced itself. Afterwards the pipeline's per-step existence
-# checks all hit their [SKIP] branches and the GPU job goes essentially straight
-# to step 5 -> vLLM.
+# would have produced itself. It also writes qa_pairs.jsonl (step 5), so what
+# follows on the GPU is inference and nothing else:
 #
-#   sbatch code/pipeline/preprocess/gen_images_cpu.sh validate      # now, on the short cpu queue
-#   sbatch code/pipeline/aksssr_pipeline.sh validate     # later; steps 1-4 skip
+#   sbatch code/pipeline/preprocess/gen_images_cpu.sh validate   # now, on the short cpu queue
+#   QA_JSONL=$PWD/outputs/<run>_validate/qa_pairs.jsonl \
+#       sbatch code/pipeline/infer/pool_infer.sh                 # later; the GPU step alone
 #
-# The two can also be queued at the same time -- the pipeline re-checks each
-# completion signal per case, so whatever this job has finished by then is
-# skipped and the rest is generated on the GPU node as before. Nothing breaks
-# if they overlap on a case; the worst case is that one case's images get
-# written twice (see PARALLELISM below for the one real caveat).
+# A batch driver that renders as well can be queued at the same time -- it
+# re-checks each completion signal per case, so whatever this job has finished
+# by then is skipped and the rest is generated on the GPU node as before.
+# Nothing breaks if they overlap on a case; the worst case is that one case's
+# images get written twice (see PARALLELISM below for the one real caveat).
 #
 # PARALLELISM
 # -----------
@@ -144,10 +144,10 @@ WORKERS="${WORKERS:-4}"
 # render images nothing in that experiment reads. On the 144-case SFT pool that
 # is the difference between a ~2.5 h job and a ~25 min one.
 #
-# Do NOT then point aksssr_pipeline.sh at that images dir: it would find the
-# tooth sidecars present, skip step 3, and generate the other three itself on
-# the GPU node -- which works, but pays for the A100 to do CPU work, the exact
-# thing this job exists to avoid.
+# Do NOT then point a rendering batch driver at that images dir: it would find
+# the tooth sidecars present, skip step 3, and generate the other three itself
+# on the GPU node -- which works, but pays for the A100 to do CPU work, the
+# exact thing this job exists to avoid.
 STEPS="${STEPS:-all}"
 want_step() {
     case ",$STEPS," in
@@ -536,7 +536,10 @@ export NO_FACTS STATUS_DIR
     echo "[INFO] Tooth composites: $n_tooth image(s) (1/tooth, up to 32/case)"
     echo "[INFO] Sinus detail    : $n_sinus image(s) (up to 2/case)"
     echo ""
-    echo "[INFO] Next -- the GPU run now skips steps 1-4 and goes to vLLM:"
-    echo "  ${NO_FACTS:+NO_FACTS=1 }${RUN_NAME:+RUN_NAME=$RUN_NAME }sbatch code/pipeline/aksssr_pipeline.sh $SPLIT"
+    echo "[INFO] Next -- images and qa_pairs.jsonl are done; the GPU step is inference:"
+    echo "  QWEN_MODEL_NAME=<served-model-name> RUN_NAME=${RUN_NAME}_${SPLIT} \\"
+    echo "    QA_JSONL=$OUT_DIR/qa_pairs.jsonl \\"
+    echo "    GT_DIR=\$PWD/dataset/$SPLIT/outputs/ground_truth \\"
+    echo "    sbatch code/pipeline/infer/pool_infer.sh"
 
 } 2>&1

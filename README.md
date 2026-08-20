@@ -66,8 +66,11 @@ that is fine.
 
 ```
 code/
+  competition/      ONE case, start to finished report — the inference path,
+                    driven end to end by competition_runner.py
   pipeline/
-    segmentation/   stage 1 — NOT in this repo; the interface it must satisfy
+    segmentation/   stage 1 — NOT in this repo; the interface it must satisfy,
+                    plus the facts audit that reconciles it against the mask
     preprocess/     volume + mask + facts -> PNGs + captions -> qa_pairs.jsonl
     infer/          the only GPU stage: vLLM, via OpenAI-standard response_format
     postprocess/    pred -> normalize -> classify + source rules -> report
@@ -77,8 +80,7 @@ code/
 docs/               postprocess_pipeline.md — every source rule, its
                     measurement and what it gives up
                     competition_pipeline.md — the 15-minute, one-case-per-start
-                    Grand Challenge container this pipeline feeds (its code is
-                    a separate repo)
+                    shape competition_runner.py is built for
 schema/schema.json  the single source of truth
 env/                one host env, one container spec
 ```
@@ -122,15 +124,44 @@ prediction, which is what `structured_findings_evaluation.py` scores against.
 
 ## Run it
 
-End to end — images, VQA pairs, inference, summaries, reports:
+**One case, start to finished report.** `competition_runner.py` is the whole
+inference path in one process: it audits the facts against the mask, renders,
+builds the VQA calls, runs them, post-processes and writes the report —
+starting vLLM first and loading it *while* the images render, because the
+container it was written for gets 15 minutes per case and pays the model load
+out of them.
 
 ```bash
-sbatch code/pipeline/aksssr_pipeline.sh validate
+python code/competition/competition_runner.py \
+    --case-id A008 \
+    --volume  dataset/validate/images/A008_0000.nii.gz \
+    --mask    dataset/validate/masks/A008.nii.gz \
+    --facts-file dataset/validate/facts/A008.json \
+    --model   models/Qwen3.5-9B-AWQ \
+    --out-dir outputs/one_case
 
-LIMIT=5 sbatch code/pipeline/aksssr_pipeline.sh validate   # smoke; SEED=42 pins the cases
-RESUME=1  ...                                              # skip cases with a _pred.json
-DRY_RUN=1 ...                                              # no vLLM calls
-RUN_NAME=my_arm ...                                        # separate output directory
+--no-server        # render and time only; skip vLLM entirely
+--report-timing    # per-phase table, with vLLM's own startup milestones
+```
+
+It prints where the time went, phase by phase, which is the point: "vLLM took
+11 minutes" is not actionable, "9 of those 11 were graph capture" is.
+`competition_sim.sh` runs it under SLURM on a 24 GiB card, the Grand Challenge
+envelope. [docs/competition_pipeline.md](docs/competition_pipeline.md) has the
+schedule and the facts-audit rationale.
+
+**A whole split**, which is what the scored numbers above come from. The same
+stages, but the model loads once for forty cases instead of once each:
+
+```bash
+# 1. render + qa_pairs.jsonl, on the CPU partition — no GPU held while rendering
+sbatch code/pipeline/preprocess/gen_images_cpu.sh validate
+#    LIMIT=5 for a smoke run; SEED=42 pins which cases
+# 2. inference (the only GPU stage), then postprocess + the fact-level survey
+QWEN_MODEL_NAME=Qwen3.5-9B-AWQ RUN_NAME=my_arm_validate \
+  QA_JSONL=$PWD/outputs/my_arm_validate/qa_pairs.jsonl \
+  GT_DIR=$PWD/dataset/validate/outputs/ground_truth \
+  sbatch code/pipeline/infer/pool_infer.sh
 ```
 
 Everything after inference is CPU-only, so the tuning loop needs no GPU and no
@@ -155,8 +186,9 @@ NO_RADFACT=1 code/eval/eval_now.sh ...     # BLEU/METEOR only, no GPU
 ```
 
 There is no test suite and no linter. Verification here means `LIMIT=5` smoke
-runs and the survey-to-survey diff that `structured_findings_evaluation.py`
-prints automatically.
+runs, one case through `competition_runner.py --no-server`, and the
+survey-to-survey diff that `structured_findings_evaluation.py` prints
+automatically.
 
 ## Train it
 
