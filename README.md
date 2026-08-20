@@ -74,7 +74,11 @@ code/
   ground_truth/     reference reports -> generated GT, shaped like predictions
   eval/             official ranking, the fact-level survey, judge server
   train/            LoRA SFT: pool selection, targets, training, merge
-docs/               the design records the code cites
+docs/               postprocess_pipeline.md — every source rule, its
+                    measurement and what it gives up
+                    competition_pipeline.md — the 15-minute, one-case-per-start
+                    Grand Challenge container this pipeline feeds (its code is
+                    a separate repo)
 schema/schema.json  the single source of truth
 env/                one host env, one container spec
 ```
@@ -156,13 +160,25 @@ prints automatically.
 
 ## Train it
 
-The 0.4658 arm is LoRA SFT on the vision tower and merger
-(`ARM=vision+merger`), one epoch, with the arch-level calls included in the
-training rows — `build_sft_targets.py --include-arch`, which is the change that
-separated arm 6 from arm 5 and is worth reading about before rerunning.
+The 0.4658 arm is LoRA SFT on the vision tower and merger, trained on the
+training split minus a 24-case held-out gate:
+
+| | |
+|---|---|
+| arm | `ARM=vision+merger` — vision blocks + the vision/text merger, not the LM |
+| epochs | 1 |
+| rows | `build_sft_targets.py --include-arch`, filtered by `train_minus_heldout.txt` → 10,207 |
+| base | bf16 `Qwen3.5-9B`; the adapter is merged into `Qwen3.5-9B-AWQ` afterwards, tensor by tensor |
+| held out | 24 cases, 6 per sub-dataset, for the eval-loss curve — never for the score |
+
+`--include-arch` is the change that separated arm 6 from arm 5: it puts the nine
+`global` arch-level calls per case into the training rows, which every arm
+before it trained without.
 
 ```bash
-# 1. render the training split and pick the case pool
+# 0. the case lists: all_cases.txt, heldout.txt, train_minus_heldout.txt
+python code/train/select_sft_pool.py --out-dir outputs/training_results/sft_pool
+# 1. render the training split
 sbatch code/pipeline/preprocess/gen_images_cpu.sh training
 # 2. teacher writes visual_evidence for the answers it is handed
 QWEN_MODEL_NAME=Qwen3.5-27B EV_DIR=evidence_27b sbatch code/train/draft_evidence.sh
@@ -170,6 +186,7 @@ QWEN_MODEL_NAME=Qwen3.5-27B EV_DIR=evidence_27b sbatch code/train/draft_evidence
 EV_DIR=evidence_27b sbatch code/train/screen_evidence.sh
 # 4. train (build_sft_targets --include-arch runs inside this job)
 MODEL=$PWD/models/Qwen3.5-9B STAGE=train ARM=vision+merger EPOCHS=1 \
+  CASE_LIST=$PWD/outputs/training_results/sft_pool/train_minus_heldout.txt \
   sbatch code/train/vision_sft.sh
 # 5. merge the adapter into the AWQ checkpoint, at tensor level
 OUT_MODEL=models/Qwen3.5-9B-AWQ-arm6 sbatch code/train/merge_arm.sh
@@ -178,24 +195,40 @@ QWEN_MODEL_NAME=Qwen3.5-9B-AWQ-arm6 RUN_NAME=arm6 \
   sbatch code/pipeline/infer/pool_infer.sh
 ```
 
-Read [docs/vision_sft_plan_light.md](docs/vision_sft_plan_light.md) §8.3 for
-arm 6's exact configuration and measured results, and
-[docs/vision_sft_plan.md](docs/vision_sft_plan.md) for why the rig is shaped the
-way it is. `check_prompt_parity.py` is the acceptance test that matters: it
-asserts the training path and the serving path produce **token-id-identical**
-prompts. Break that and the model is fine-tuned for a prompt it will never see.
+Step 0 is not optional — `train_vision_lora.py` treats a missing `heldout.txt`
+as a failure rather than a skip, because a check that disappears when its input
+moves is worse than no check. It has a second mode, `--ranking`, that selects a
+pool by ground-truth quality using `survey_gt_quality.py` and
+`audit_report_facts.py`; arm 6 uses neither, and the held-out 24 it draws are
+not arm 6's own 24 — same 6/6/6/6 shape, different names, and the gate is not
+what the 0.4658 is measured on.
 
-**Model:** the merged checkpoint is published at
-`<HUGGINGFACE_URL_TO_FILL_IN>` — hub `main` is arm 6, tag `arm5` is arm 5.
+`check_prompt_parity.py` is the acceptance test that matters: it asserts the
+training path and the serving path produce **token-id-identical** prompts.
+Break that and the model is fine-tuned for a prompt it will never see.
+
+**Model:** the merged checkpoint is not public yet — the weights are released
+with the paper. Until then, the recipe above is the whole of it: everything that
+produced arm 6 is in this repo.
 
 ## Environment and hardware
 
 Two: one host conda env and one container.
 
 ```bash
-conda env create -f env/environment.yml    # cbct_base; pulls requirements.txt
+conda env create -f env/environment.yml     # cbct_base; pulls requirements.txt
 conda activate cbct_base
+python -m nltk.downloader wordnet omw-1.4   # DATA, not a pip package
 ```
+
+**The third line is not optional if you intend to compare scores.** `nltk`
+installs code, never corpora, and METEOR is half the captioning score — 10% of
+the Final Score. Without wordnet, `official_ranking.py` scores METEOR with the
+lite implementation adapted from the challenge's own `evaluate.py`: correct
+code on a different scale, 0.3616 where the table above says 0.3848, i.e. a
+Final Score of 0.4635. It warns on the fallback and records `meteor_backend` in
+`summary.json` either way, so a run always states which one produced its number.
+Every number here is `"nltk-wordnet"`.
 
 `cbct_base` runs the whole CPU path — the four renderers, `build_vqa_pairs.py`,
 postprocess, report synthesis, ground truth and scoring — and the inference
@@ -203,7 +236,7 @@ postprocess, report synthesis, ground truth and scoring — and the inference
 `code/pipeline/postprocess/postprocess_now.sh` usable as a fast loop on a
 laptop or a login node.
 
-The container is the vLLM **server**, and also the training stack:
+The container is the vLLM **server**, and by spec the training stack as well:
 `env/container_requirements.txt`. Nothing in the pipeline imports vLLM —
 `run_vqa_inference.py` is an HTTP client that sends OpenAI-standard
 `response_format` — so the two halves only ever needed to agree over a socket.
@@ -212,6 +245,19 @@ Serving and training can share one image because vLLM 0.22.0 pins
 training needs; vLLM 0.19.0 could not, and that is why this used to be three
 images. The header of that file carries the table and the build steps. **It is
 a spec, not a built image** — verify a first build rather than trusting it.
+
+Which means the scripts do not yet describe one image, and say so honestly:
+
+- The **serving** default differs by job. `aksssr_pipeline.sh`,
+  `judge_server.sh` and `gen_ground_truth.sh` default to `extraction.sqsh`
+  (vLLM 0.22.0); `pool_infer.sh`, `draft_evidence.sh`, `screen_evidence.sh` and
+  `prompt_parity.sh` to `vllm019_cu128.sqsh` (vLLM 0.19.0). Those are the two
+  images that produced the numbers above, and the defaults are left pointing at
+  them rather than at a merge that has not been measured. `SIF_PATH` overrides
+  every one of them, so one built image is one variable.
+- **Training runs on the host, not in a container.** `vision_sft.sh` calls
+  `$SFT_PY`, an interpreter path. Once the merged image is built, point
+  `SFT_PY` at its python; until then the training stack is its own env.
 
 The repo is mounted at `/project` inside the container, which is why
 `build_vqa_pairs.py` writes image paths relative to `--project-dir`: the same
@@ -225,15 +271,23 @@ load-bearing — PyPI's 0.1.0 predates a rewrite of the TOOTHFAIRY prompts, so
 Inference and the judge each want an A100; a vLLM load takes 15–25 minutes,
 which is why the pipeline starts the server first and renders while it loads.
 
-**These scripts encode one site's SLURM configuration.** Four things to change
+**These scripts encode one site's SLURM configuration.** Five things to change
 for your cluster, and nothing else is site-specific:
 
 | what | where | override |
 |---|---|---|
 | partition / QoS / GRES | `#SBATCH` lines — `--partition=gpu --qos=a100 --gres=gpu:a100:1`, and `--partition=cpu --qos=cpu` for the render jobs | edit in place |
+| repo location | `$HOME/project_ToothFairy4`, the default in every `sbatch` job | `PROJECT_DIR` |
 | container image | `$HOME/containers/*.sqsh`, launched through pyxis (`srun --container-image=`) | `SIF_PATH` |
 | host interpreter | `$HOME/miniconda3/envs/cbct_base/bin/python3` | `PYTHON` |
 | training interpreter | `$HOME/miniconda3/envs/cbct_sft_cu128/bin/python3` | `SFT_PY` |
+
+`PROJECT_DIR` is a literal rather than derived from the script's own path
+because SLURM copies a batch script into a spool directory before running it,
+so `BASH_SOURCE` on a compute node points at `/var/spool/...` and not at the
+checkout. The two scripts that are *not* submitted with `sbatch` need nothing
+set: `postprocess_now.sh` walks up for `schema/schema.json`, and
+`split_survey.sh` uses paths relative to the repo root it is run from.
 
 They are left explicit rather than half-abstracted: a partially portable batch
 script is harder to fix than an honest one.

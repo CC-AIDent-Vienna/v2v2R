@@ -5,13 +5,22 @@ Everything downstream of the VLM: `postprocess_pred.py` → `source_rules.py` �
 which SOURCE each finding comes from, rather than voting between every read that
 can assert it.
 
-**The arm this describes** is arm 6 — the LoRA-SFT arm of
-`docs/vision_sft_plan_light.md` §8.3 — on validate-40, with the rules on. It scores
+**The arm this describes** is arm 6 — the LoRA-SFT arm: `ARM=vision+merger`,
+one epoch, targets built with `--include-arch` — on validate-40, with the rules
+on. It scores
 **0.4658** official, the current best, and it is the first model trained on the
 nine `global` arch calls per case. The scored run is
 `outputs/aksssr_v7_trained_arm6_validate/`; the earlier
 `outputs/training_results/vsft_arm6/val_arm6/` holds the same predictions read
 by an older postprocess and scores 0.4557 — see *Report level* below.
+
+> **What is named here but not shipped.** This document is written against the
+> research repo and cites its diagnostics by path. The public release ships the
+> report-producing path, the official metric and the fact-level survey; it does
+> not ship `code/eval/compare_sources.py`, `code/eval/evaluation.sh`,
+> `code/arms/postprocess_val_now.sh`, `code/competition/competition_sim.sh` or
+> anything under `code/studies/`. Those names are provenance for a measurement,
+> not instructions — every rule below is stated with its number here.
 
 > **Validate-40 only.** Arm 6's inference on the 582-case training split **has
 > not been run**, so every training-split section below is empty and says so.
@@ -59,6 +68,8 @@ reproduce `structured_findings_evaluation.py`'s OVERALL table exactly — which 
 it is the same measurement, only disaggregated.
 
 ```bash
+# A DIAGNOSTIC, and one of the files listed under "What is named here but not
+# shipped" at the top of this document -- it lives in the research repo.
 python3 code/eval/compare_sources.py outputs/aksssr_v7_trained_arm6_validate --split validate
 # -> <run>/survey/source_compare_<stamp>.{txt,json}
 ```
@@ -1679,9 +1690,9 @@ Buccal is **19%** of training sides against 13% here, which is both why the
 margin may shrink and why a rule that *can* answer buccal is worth keeping over
 one that cannot.
 
-Deriving the prior from validate would be tuning on the eval split, which
-`docs/vision_sft_plan_light.md` §9 calls the rule most tempting and least worthwhile
-to bend. 0.806 is the number to quote; 0.873 is what this draw happens to give.
+Deriving the prior from validate would be tuning on the eval split — the rule
+this project has had the most reason to bend and has not. 0.806 is the number to
+quote; 0.873 is what this draw happens to give.
 
 **Not yet evaluated properly, and known to be so.** The composite's per-tooth
 `location` has never been scored against the 794 training sides, only the 63

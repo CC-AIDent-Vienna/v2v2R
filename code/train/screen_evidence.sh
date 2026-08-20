@@ -12,19 +12,21 @@
 #
 #   EV_DIR=evidence_27b sbatch code/train/screen_evidence.sh
 #
-# TWO DEFAULTS HERE POINT AT THE 120-CASE TRIAL POOL, AND BOTH FEED STEP 2.
-# CASE_LIST defaults to wide.txt and QA_JSONL to vsft_pool_training's payload,
-# which after the rescope holds 110 records against a 582-case corpus. Neither
-# is only the screen's input: build_sft_targets.py at the bottom takes both and
-# overwrites sft_wide.jsonl. Left at the defaults, this screens what it can,
-# writes targets for a fifth of the corpus, and exits 0.
+# QA_JSONL STILL DEFAULTS TO THE 120-CASE TRIAL POOL. CASE_LIST NO LONGER DOES.
+# Neither is only the screen's input: build_sft_targets.py at the bottom takes
+# both and overwrites sft_wide.jsonl. Both defaults used to point at the trial
+# pool, so left alone this screened what it could, wrote targets for a fifth of
+# the corpus, and exited 0.
 #
 # That is not hypothetical -- job 556051 was submitted with CASE_LIST corrected
 # and QA_JSONL left alone, and was killed during model load. The guard below
-# exists because a comment did not catch it.
+# exists because a comment did not catch it, and it is now the one that fires:
+# CASE_LIST defaults to all_cases.txt (582 cases, written by
+# select_sft_pool.py -- see code/train/draft_evidence.sh), so the trial payload
+# is smaller than the list and the run FAILS rather than shrinking quietly.
+# Point QA_JSONL at the payload built for the full corpus:
 #
 #   EV_DIR=evidence_27b \
-#   CASE_LIST=$PWD/outputs/training_results/sft_pool/all_582.txt \
 #   QA_JSONL=$PWD/outputs/vsft_full_training/qa_pairs.jsonl \
 #       sbatch code/train/screen_evidence.sh
 # =============================================================================
@@ -49,7 +51,7 @@ POOL="$PROJECT_DIR/outputs/training_results/vsft_pool_training"
 EV_DIR="${EV_DIR:-evidence_27b}"
 QA_JSONL="${QA_JSONL:-$POOL/qa_pairs.jsonl}"
 GT_DIR="${GT_DIR:-$PROJECT_DIR/dataset/training/outputs/ground_truth}"
-CASE_LIST="${CASE_LIST:-$PROJECT_DIR/outputs/training_results/sft_pool/wide.txt}"
+CASE_LIST="${CASE_LIST:-$PROJECT_DIR/outputs/training_results/sft_pool/all_cases.txt}"
 PORT="${PORT:-8000}"
 MIN_VISIBLE="${MIN_VISIBLE:-0.5}"
 TOKENS_PER_REQUEST="${TOKENS_PER_REQUEST:-6200}"

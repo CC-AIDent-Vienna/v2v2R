@@ -8,6 +8,18 @@
 # currently installed in ~/.local/lib/python3.13/site-packages (user site), NOT
 # in the env itself. They are listed here so a rebuilt env is self-contained.
 #
+# NLTK SHIPS NO CORPORA, AND METEOR IS 10% OF THE OFFICIAL SCORE. `nltk` below
+# installs the code; wordnet is DATA and arrives separately. Without it
+# official_ranking.py falls back to the lite METEOR of the challenge's own
+# evaluate.py -- a legitimate implementation on a different scale (0.3616
+# against 0.3848 on validate-40 arm 6, i.e. -0.0023 Final Score). It warns, and
+# records `meteor_backend` in summary.json, but pip cannot install this for
+# you. After creating the env, run once:
+#
+#     python -m nltk.downloader wordnet omw-1.4
+#
+# Every number in this repo is meteor_backend="nltk-wordnet".
+#
 # Conda-provided (do NOT pip install; they come from environment.yml):
 #   Pygments, asttokens, comm, debugpy, decorator, executing, ipykernel, ipython, ipython_pygments_lexers, jedi, jupyter_client, jupyter_core, matplotlib-inline, nest_asyncio, parso, pexpect, platformdirs, prompt_toolkit, psutil, ptyprocess, pure_eval, python-dateutil, pyzmq, six, stack_data, tornado, traitlets, typing_extensions, wcwidth
 

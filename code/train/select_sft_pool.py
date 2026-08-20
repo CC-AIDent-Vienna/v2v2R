@@ -72,7 +72,42 @@ The held-out set is stratified REGARDLESS of --per-prefix-top. It is what the
 stage-C decision gate reads, and a gate that reads a 78%-P sample to predict a
 25%-P result is not a gate. That one is not a knob.
 
+WITHOUT --ranking: THE ARM-6 MODE, AND THE ONE THE RELEASE NEEDS
+────────────────────────────────────────────────────────────────
+Everything above selects a pool by GT quality, and arm 6 -- the 0.4658 arm --
+does not use one. It trains on the whole training split minus the held-out
+gate, so the only thing it needs from this file is the held-out set: a
+stratified 6-per-prefix draw, and the complement of it.
+
+So --ranking is optional. Without it there is no score to rank by, the pool is
+every case under dataset/training/images, and the three files written are
+`all_cases.txt`, `heldout.txt` and `train_minus_heldout.txt` -- the last being
+what vision_sft.sh takes as --case-list. narrow/wide are not written, because
+narrow and wide are defined by the score thresholds and there is no score.
+
+That matters beyond convenience: `--ranking` takes survey_gt_quality.py's
+case_ranking_*.csv, and reproducing that is a second pipeline over the
+reference reports. The arm-6 path does not need it, and a release that made it
+mandatory made train_minus_heldout.txt unobtainable and training unrunnable
+(train_vision_lora.py's §0b guard treats a missing heldout.txt as a failure,
+by design).
+
+--audit-json still applies in both modes and is still optional. Arm 6 passed
+neither, i.e. no case was excluded.
+
+The 24 held-out cases this mode draws are NOT arm 6's own 24: arm 6's came out
+of the ranked >=0.80 pool, and a draw over all 582 cannot land on the same
+names. The counts and the 6/6/6/6 shape are identical, and the held-out set is
+the eval-loss gate rather than a scored artifact -- the 0.4658 is validate-40,
+which neither draw can touch -- so what this changes is which 558 cases a
+rebuild trains on, not what it is measured against. Byte-exact reproduction of
+arm 6's split needs arm 6's heldout.txt, not this file.
+
 Usage:
+    # arm 6: no ranking, no audit -- the whole split minus the gate
+    python code/train/select_sft_pool.py --out-dir outputs/training_results/sft_pool
+
+    # GT-quality selection, the narrow/wide arms
     python code/train/select_sft_pool.py \\
         --ranking outputs/gt_quality_training/case_ranking_20260810_232836.csv \\
         --audit-json <audit.json> --out-dir outputs/training_results/sft_pool
@@ -147,6 +182,17 @@ def validate_case_ids() -> set[str]:
     return {c for c in (case_of(p.name) for p in d.glob("*_0000.nii.gz")) if c}
 
 
+def training_case_ids() -> set[str]:
+    """Every case id under dataset/training -- the pool when there is no
+    ranking to select from. Read from the volumes rather than from a list
+    file, so it cannot disagree with what the renderers will find."""
+    d = ROOT / "dataset/training/images"
+    ids = {c for c in (case_of(p.name) for p in d.glob("*_0000.nii.gz")) if c}
+    if not ids:
+        sys.exit(f"[FAIL] no cases under {d} -- is the training split present?")
+    return ids
+
+
 def composition(cases) -> dict:
     return dict(sorted(collections.Counter(c[0] for c in cases).items()))
 
@@ -173,10 +219,61 @@ def stratify(cases, per_prefix: int | None, rng) -> list[str]:
     return sorted(out)
 
 
+def select_unranked(args, rng, bad: set[str], forbidden: set[str]) -> int:
+    """The arm-6 pool: no GT-quality score, so no narrow and no wide.
+
+    Held-out is drawn the same way it is in every other mode -- stratified,
+    --heldout-per per prefix -- because it is the gate, and a gate that reads
+    a 69%-P sample cannot predict a 25%-P result. What changes is that the
+    training pool is its complement rather than a threshold's survivors.
+    """
+    cases = sorted(training_case_ids() - bad - forbidden)
+    H = args.heldout_per
+
+    held = stratify(cases, H, rng)[:H * 4]
+    held_set = set(held)
+    train = [c for c in cases if c not in held_set]
+
+    print(f"[INFO] no --ranking: the pool is dataset/training in full")
+    print(f"[INFO] audit ERRORs exclude {len(bad)} case(s); "
+          f"{len(forbidden)} validate ids are forbidden and none appeared")
+    print()
+    print("SELECTED (unranked -- the arm-6 pool):")
+    print(fmt(cases, "all training cases"))
+    print(fmt(train, "train minus held-out"))
+    print(fmt(held, "held-out (the gate)"))
+    print()
+
+    assert not (set(train) & held_set), "held-out leaked into training"
+    assert not ((set(train) | held_set) & forbidden), "validate case in a pool"
+
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    written = {}
+    for name, group in (("all_cases", cases), ("train_minus_heldout", train),
+                        ("heldout", held)):
+        f = args.out_dir / f"{name}.txt"
+        f.write_text("\n".join(group) + "\n", encoding="utf-8")
+        written[name] = {"n": len(group), "composition": composition(group),
+                         "cases": group}
+        print(f"[INFO] {f} ({len(group)} cases)")
+
+    meta = args.out_dir / "pool.json"
+    meta.write_text(json.dumps({
+        "ranking": None, "seed": args.seed, "stratified": False,
+        "audit_error_cases": sorted(bad),
+        "sets": written,
+    }, indent=2) + "\n", encoding="utf-8")
+    print(f"[INFO] {meta}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ranking", type=Path, required=True)
+    ap.add_argument("--ranking", type=Path,
+                    help="survey_gt_quality.py's case_ranking_*.csv. Omit for "
+                         "the arm-6 pool: the whole training split minus a "
+                         "stratified held-out set, no GT-quality selection.")
     ap.add_argument("--audit-json", type=Path,
                     help="audit_report_facts.py --json output; cases with a "
                          "surviving ERROR are excluded")
@@ -201,9 +298,13 @@ def main() -> int:
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
-    rows = list(csv.DictReader(args.ranking.open(encoding="utf-8")))
     bad = audit_error_cases(args.audit_json)
     forbidden = validate_case_ids()
+
+    if args.ranking is None:
+        return select_unranked(args, rng, bad, forbidden)
+
+    rows = list(csv.DictReader(args.ranking.open(encoding="utf-8")))
 
     scored = {r["case_id"]: float(r.get("score_asis") or 0.0) for r in rows}
 

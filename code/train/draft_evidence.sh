@@ -17,6 +17,19 @@
 #   * a 52 GB bf16 27B on an 80 GB card starves its own batch -- ~20 GB of KV
 #     left. Qwen3.5-27B-FP8 halves the weights, roughly doubles the pool, and
 #     H100 does FP8 natively. Same script, different QWEN_MODEL_NAME.
+#
+# CASE_LIST DEFAULTS TO all_cases.txt, WHICH select_sft_pool.py WRITES.
+# It used to default to wide.txt -- the 120-case trial pool, and a file only
+# the ranked mode produces. Arm 6 does not use a ranked pool, so on any tree
+# but this one that default named a file that could not be built:
+#
+#   python code/train/select_sft_pool.py --out-dir outputs/training_results/sft_pool
+#
+# writes all_cases.txt (the whole training split), heldout.txt (the stratified
+# gate) and train_minus_heldout.txt (what vision_sft.sh takes as --case-list).
+# Evidence is drafted for ALL cases, held-out included; the held-out exclusion
+# happens at training, which is where train_vision_lora.py's §0b guard checks
+# it.
 # =============================================================================
 #SBATCH --job-name=draft_ev
 #SBATCH --partition=gpu
@@ -43,7 +56,7 @@ QWEN_MODEL_NAME="${QWEN_MODEL_NAME:?set QWEN_MODEL_NAME}"
 EV_DIR="${EV_DIR:-evidence_$(echo "$QWEN_MODEL_NAME" | tr 'A-Z.' 'a-z_')}"
 QA_JSONL="${QA_JSONL:-$PROJECT_DIR/outputs/training_results/vsft_pool_training/qa_pairs.jsonl}"
 GT_DIR="${GT_DIR:-$PROJECT_DIR/dataset/training/outputs/ground_truth}"
-CASE_LIST="${CASE_LIST:-$PROJECT_DIR/outputs/training_results/sft_pool/wide.txt}"
+CASE_LIST="${CASE_LIST:-$PROJECT_DIR/outputs/training_results/sft_pool/all_cases.txt}"
 OUT_DIR="$PROJECT_DIR/outputs/training_results/vsft_pool_training/$EV_DIR"
 PORT="${PORT:-8000}"
 TOKENS_PER_REQUEST="${TOKENS_PER_REQUEST:-6200}"

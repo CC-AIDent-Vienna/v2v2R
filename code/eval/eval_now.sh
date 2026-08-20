@@ -51,6 +51,15 @@ if ! "$PYTHON" -c "import nltk" 2>/dev/null; then
     echo "[FAIL] nltk not importable by $PYTHON -- activate cbct_base or set PYTHON=..."
     exit 1
 fi
+# nltk installs no corpora, and a missing wordnet is not an error -- METEOR just
+# quietly changes implementation, and scale, on 10% of the Final Score.
+# official_ranking.py warns and records meteor_backend either way; this says it
+# BEFORE a RadFact run that takes hours, while the fix is still cheap.
+if ! "$PYTHON" -c "from nltk.corpus import wordnet; wordnet.ensure_loaded()" 2>/dev/null; then
+    echo "[WARN] wordnet corpus missing -- METEOR will use the lite fallback,"
+    echo "[WARN] which does NOT score the same. Fix with:"
+    echo "[WARN]   $PYTHON -m nltk.downloader wordnet omw-1.4"
+fi
 
 ARGS=(--schema "$PROJECT_DIR/schema/schema.json"
       --synthesized-dir "$SYNTH_DIR"

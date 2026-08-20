@@ -33,9 +33,15 @@ RadFact is computed via the official `radfact_lite` PyPI package
 Both paths go through the same radfact_lite code; only the ModelConfig
 differs, so scores are directly comparable modulo the judge model itself.
 
-Two things about radfact_lite make its scores non-comparable across runs, so
-both are recorded into summary.json rather than assumed:
+Three things make a score non-comparable across runs, so all three are
+recorded into summary.json rather than assumed. The first is METEOR's; the
+other two are radfact_lite's:
 
+  meteor_backend -- "nltk-wordnet" or "lite-fallback". nltk ships no corpora,
+                    so a clean env has no wordnet and METEOR silently drops to
+                    the lite implementation, on a different scale. Install it
+                    with `python -m nltk.downloader wordnet omw-1.4`; every
+                    number in this repo is "nltk-wordnet".
   filter_normal_findings  -- ON by default. radfact_lite's finding filter runs
                     over both candidate and reference phrases before
                     entailment, so normal/boilerplate statements ("all other
@@ -132,6 +138,23 @@ def find_first_reference_report(reports_dir: Path, case_id: str) -> Optional[Pat
 
 WORDNET_AVAILABLE: Optional[bool] = None
 
+# The wordnet corpus is DATA, not a pip dependency: `pip install nltk` gives
+# you the code and none of the corpora, and nltk's own answer to a missing one
+# is a LookupError at first use. So this file has two METEOR implementations
+# and picks between them at run time -- which means a clean rebuild of the env
+# silently scores METEOR on a different scale than every number in this repo
+# (METEOR is half the captioning score, i.e. 10% of the Final Score).
+#
+# Two guards, because the fallback is legitimate (it is the official
+# evaluate.py's own) and the silence is not:
+#   1. has_wordnet() says so, once, loudly, with the fix.
+#   2. meteor_backend() goes into summary.json next to judge_model and
+#      radfact_lite_prompts, so which one ran is recorded per run rather
+#      than inferred from when the env was built.
+WORDNET_HINT = ("METEOR is running on the lite fallback, NOT nltk+wordnet. "
+                "The two do not score the same. Install the corpus with:\n"
+                "[WARN]   python -m nltk.downloader wordnet omw-1.4")
+
 
 def tokenize(text: str) -> List[str]:
     return [token for token in re.findall(r"\w+|[^\w\s]", text.lower()) if token.strip()]
@@ -147,7 +170,13 @@ def has_wordnet() -> bool:
         WORDNET_AVAILABLE = True
     except LookupError:
         WORDNET_AVAILABLE = False
+        print(f"[WARN] {WORDNET_HINT}", file=sys.stderr)
     return WORDNET_AVAILABLE
+
+
+def meteor_backend() -> str:
+    """Which METEOR implementation this run used. Recorded as provenance."""
+    return "nltk-wordnet" if has_wordnet() else "lite-fallback"
 
 
 def _as_reference_list(reference) -> List[str]:
@@ -865,6 +894,7 @@ if __name__ == "__main__":
                 **(judge.as_metadata() if judge else
                    {"judge_backend": None, "judge_model": None, "judge_base_url": None,
                     "vllm_url": None, "model": None}),
+                "meteor_backend": meteor_backend(),
                 "batches_completed": batch_num,
                 "batches_total": n_batches,
                 "aggregate": agg,
@@ -887,6 +917,7 @@ if __name__ == "__main__":
             **(judge.as_metadata() if judge else
                {"judge_backend": None, "judge_model": None, "judge_base_url": None,
                 "vllm_url": None, "model": None}),
+            "meteor_backend": meteor_backend(),
             "aggregate": final_agg,
             "results_file": str(results_path),
         }, f, indent=2)

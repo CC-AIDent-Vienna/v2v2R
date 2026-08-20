@@ -78,15 +78,16 @@ add_code_paths()
 
 from postprocess_pred import postprocess_prediction  # noqa: E402
 
-# generate_report_from_pred is NOT imported here. It is the LLM report writer,
-# used only by the baseline/comparison arms; the pipeline and the competition
-# container both write reports with synthesize_report.py's deterministic
-# templates. A module-scope import made it a hard dependency of every consumer
-# of this file -- 17 modules import it -- and put the LLM writer inside a
-# container whose whole safety argument is that a template cannot invent a
-# clinical error the VQA did not already make. It is imported lazily inside
-# generate_report_for_case(), the one function that needs it.
-
+# The LLM report writer is not here, and not reachable from here. This file
+# writes predictions and (optionally) postprocessed summaries; reports are
+# written by synthesize_report.py's deterministic templates, in the pipeline
+# and in the competition container alike. --reports-out-dir used to hook the
+# LLM writer of the baseline arms in through a lazy import, and outlived it:
+# the pipeline stopped passing the flag, the module stopped shipping, and the
+# flag stayed in the CLI where it failed with ModuleNotFoundError for anyone
+# who found it. The safety argument for the template -- it cannot invent a
+# clinical error the VQA did not already make -- is worth more than a flag
+# nothing passed.
 
 # ── Image encoding ───────────────────────────────────────────────────────
 
@@ -931,11 +932,10 @@ GLOBAL_GROUPS = ["global"]
 # v4 training run: 4-6 segmented teeth per case).
 TRUST_MODEL_ABSENCE = False
 
-# Cases whose narrative report failed, collected across the whole run so the
-# final summary can state how many reports are missing instead of leaving the
-# discrepancy (N predictions vs M reports) for someone to notice by hand.
-REPORT_FAILURES: List[tuple] = []
-
+# Cases whose --resume fill-in failed, collected across the whole run so the
+# final summary can state how many summaries are missing instead of leaving
+# the discrepancy (N predictions vs M summaries) for someone to notice by hand.
+FILL_FAILURES: List[tuple] = []
 
 # Which arch each dental_arch_findings_* fact covers, for model_absent_teeth.
 ARCH_FINDINGS_FIELDS = {
@@ -1001,16 +1001,14 @@ def model_absent_teeth(global_pred: dict) -> set:
 def write_summary_for_case(prediction: dict, summaries_out_dir: str) -> Optional[dict]:
     """
     Postprocess one case's prediction and persist the intermediate
-    {case_id}_summary.json -- the exact compact JSON that is handed to the
-    report-writing LLM. Without this the summary only ever exists in memory,
-    so a bad report can't be traced back to whether postprocessing or the LLM
+    {case_id}_summary.json -- the exact compact JSON that synthesize_report.py
+    renders. Without this the summary only ever exists in memory, so a bad
+    report cannot be traced back to whether postprocessing or the extraction
     was at fault. Same content and filename as postprocess_pred.py's CLI, so
-    the two are interchangeable (and these files can be hand-corrected and
-    reused as --report-examples-dir few-shots).
+    the two are interchangeable and these files can be hand-corrected.
 
-    Returns the summary so the caller can pass it straight to the report call
-    instead of postprocessing a second time; None if postprocessing failed
-    (logged, never fatal -- a summary is a debugging artifact).
+    Returns the summary, or None if postprocessing failed (logged, never fatal
+    -- a summary is a debugging artifact).
     """
     case_id = prediction.get("case_id", "?")
     try:
@@ -1025,78 +1023,6 @@ def write_summary_for_case(prediction: dict, summaries_out_dir: str) -> Optional
               file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         return None
-
-
-def generate_report_for_case(client, model: str, prediction: dict,
-                             debug: bool = True,
-                             summary: Optional[dict] = None) -> str:
-    """
-    Postprocess + write the narrative report for one case, REUSING the same
-    vLLM client/model connection already open for the VQA extraction calls
-    above -- no second server, no second model. The report-writing call is
-    plain text (a JSON summary in, prose out); the same VLM that just did
-    image extraction handles a text-only chat completion perfectly well,
-    since not attaching images to a call is completely normal usage.
-
-    Pass `summary` to reuse a postprocessed summary the caller already built
-    (see write_summary_for_case) rather than postprocessing twice -- which
-    would also print every schema-repair warning twice.
-    """
-    # Lazy, so that importing this module does not drag the LLM report writer
-    # in. See the note where postprocess_pred is imported.
-    from generate_report_from_pred import (
-        is_empty_prediction, SYSTEM_PROMPT, build_messages,
-        call_vllm_chat as _call_vllm_chat_report,
-    )
-
-    if is_empty_prediction(prediction):
-        return ""
-    if summary is None:
-        summary = postprocess_prediction(prediction)
-    # [] where few-shot examples used to go. The few-shot arm was measured and
-    # dropped: it cut claims 45%, moved precision 0.129 -> 0.168 and the Final
-    # Score +0.0081 with a CI straddling zero -- an operating-point slide along
-    # one ROC curve that read as a result. Nothing passed --report-examples-dir
-    # in any job or script, so the parameter was threading an empty list
-    # through four signatures.
-    messages = build_messages(SYSTEM_PROMPT, [], json.dumps(summary, indent=2))
-    raw = _call_vllm_chat_report(client, model, messages, max_tokens=2048)
-    if debug:
-        preview = raw[:300] if raw else repr(raw)
-        print(f"    [DEBUG] {prediction.get('case_id')} report raw response "
-              f"({len(raw) if raw else 0} chars): {preview}", file=sys.stderr)
-    return (raw or "").strip()
-
-
-def write_report_for_case(client, model: str, prediction: dict, reports_out_dir: str,
-                          debug: bool = True,
-                          summary: Optional[dict] = None) -> bool:
-    """
-    Generate one case's narrative report and write it to reports_out_dir.
-
-    Called both right after a fresh inference (from process_case) and, on a
-    --resume run, for a case whose prediction already exists but whose report
-    doesn't -- the second path needs no images, only the prediction JSON.
-
-    A per-case report failure must not abort the run, but it must be
-    diagnosable: print the traceback, and record the case so the end of the
-    run can say how many reports are missing and why. Returns True on success.
-    """
-    case_id = prediction.get("case_id", "?")
-    try:
-        report = generate_report_for_case(client, model, prediction,
-                                          debug=debug, summary=summary)
-        report_path = os.path.join(reports_out_dir, f"{case_id}.txt")
-        Path(report_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(report_path).write_text(report)
-        print(f"  [{case_id}] report -> {report_path} ({len(report)} chars)", file=sys.stderr)
-        return True
-    except Exception as e:
-        print(f"    [ERROR] {case_id} report generation: {type(e).__name__}: {e}",
-              file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        REPORT_FAILURES.append((case_id, f"{type(e).__name__}: {e}"))
-        return False
 
 
 # ── Batched calling ───────────────────────────────────────────────────────
@@ -1250,7 +1176,6 @@ def run_calls_concurrently(jobs: List[Tuple[str, Callable[[], dict]]],
 
 def process_case(client, model: str, record: dict, out_dir: str,
                   dry_run: bool = False, debug: bool = True,
-                  reports_out_dir: Optional[str] = None,
                   summaries_out_dir: Optional[str] = None,
                   max_concurrency: int = DEFAULT_MAX_CONCURRENCY) -> dict:
     """
@@ -1263,11 +1188,8 @@ def process_case(client, model: str, record: dict, out_dir: str,
          TRUST_MODEL_ABSENCE off nothing in step 2 depends on step 1 -- see
          run_calls_concurrently(). Results are still assembled in call order.
       3. If summaries_out_dir is given, write the postprocessed
-         {case_id}_summary.json -- the intermediate actually fed to the
-         report LLM -- see write_summary_for_case().
-      4. If reports_out_dir is given, IMMEDIATELY write the narrative report
-         too, reusing the same client/model connection and the summary from
-         step 3 -- see generate_report_for_case().
+         {case_id}_summary.json -- the intermediate synthesize_report.py
+         renders -- see write_summary_for_case().
     """
     case_id = record["case_id"]
     prediction = {"case_id": case_id, "global": {}, "teeth": {}}
@@ -1395,16 +1317,9 @@ def process_case(client, model: str, record: dict, out_dir: str,
         Path(out_path).write_text(json.dumps(prediction, indent=2))
         print(f"  [{case_id}] done -> {out_path}", file=sys.stderr)
 
-    # ── Postprocessed summary + report (both optional) ────────────────
-    # The summary is built first so the report call can reuse it instead of
-    # postprocessing the same prediction twice.
-    summary = None
+    # ── Postprocessed summary (optional) ──────────────────────────────
     if not dry_run and summaries_out_dir is not None:
-        summary = write_summary_for_case(prediction, summaries_out_dir)
-
-    if not dry_run and reports_out_dir is not None:
-        write_report_for_case(client, model, prediction, reports_out_dir,
-                              debug=debug, summary=summary)
+        write_summary_for_case(prediction, summaries_out_dir)
 
     return prediction
 
@@ -1492,10 +1407,11 @@ if __name__ == "__main__":
                     help="Max cases (smoke test)")
     ap.add_argument("--resume", action="store_true",
                     help="Skip the (expensive, image-based) inference for a case if "
-                         "{case_id}_pred.json already exists. With --reports-out-dir, "
-                         "a case whose prediction exists but whose {case_id}.txt does "
-                         "not still gets its report written from the existing "
-                         "prediction -- text-only, no image inference.")
+                         "{case_id}_pred.json already exists. With "
+                         "--summaries-out-dir, a case whose prediction exists but "
+                         "whose {case_id}_summary.json does not still gets its "
+                         "summary built from the existing prediction -- local "
+                         "postprocessing, no inference at all.")
     ap.add_argument("--dry-run", action="store_true",
                     help="Skip vLLM calls (validate structure only)")
     ap.add_argument("--max-concurrency", type=int,
@@ -1517,25 +1433,14 @@ if __name__ == "__main__":
                          "against. Pass $PROJECT_DIR when running on the host, or "
                          "the container mount point (e.g. /project) when running "
                          "inside a container.")
-    ap.add_argument("--reports-out-dir", default=None,
-                    help="If given, ALSO generate each case's narrative report "
-                         "(via postprocess_pred.py + the same vLLM connection used "
-                         "for VQA extraction -- no second server needed) and write "
-                         "it to {reports_out_dir}/{case_id}.txt right after that "
-                         "case's prediction is written. Omit to skip report "
-                         "generation entirely (predictions only, old behavior).")
     ap.add_argument("--summaries-out-dir", default=None,
                     help="If given, ALSO write each case's postprocessed "
                          "{summaries_out_dir}/{case_id}_summary.json -- the compact "
-                         "intermediate that postprocess_pred.py builds and that is "
-                         "handed to the report LLM verbatim. Same content/filenames "
+                         "intermediate that postprocess_pred.py builds and that "
+                         "synthesize_report.py renders. Same content and filenames "
                          "as running postprocess_pred.py separately, so it can be "
-                         "inspected, diffed, hand-corrected, or reused as a "
-                         "--report-examples-dir few-shot. Independent of "
-                         "--reports-out-dir.")
-    # --report-examples-dir is gone. It supplied few-shot pairs to the LLM
-    # report writer, no job or script ever passed it, and the few-shot arm was
-    # measured and rejected (see the note in generate_report_for_case).
+                         "inspected, diffed or hand-corrected without re-running "
+                         "inference.")
 
     args = ap.parse_args()
 
@@ -1575,11 +1480,6 @@ if __name__ == "__main__":
         print(f"[INFO] Postprocessed summaries will be written -> "
               f"{args.summaries_out_dir} (the exact JSON handed to the report LLM)",
               file=sys.stderr)
-    if args.reports_out_dir:
-        os.makedirs(args.reports_out_dir, exist_ok=True)
-        print(f"[INFO] Reports will also be generated -> {args.reports_out_dir} "
-              f"(reusing the same {args.model} connection, no second server)", file=sys.stderr)
-
     print("\n", file=sys.stderr)
     processed = 0
     skipped = 0
@@ -1590,42 +1490,28 @@ if __name__ == "__main__":
         out_path = os.path.join(args.out_dir, f"{case_id}_pred.json")
 
         if args.resume and os.path.exists(out_path):
-            # The prediction is done, but its derived artifacts may not be. If
-            # the summary or the report is missing (e.g. an earlier run died
-            # before the report stage, or ran without these flags), build them
-            # from the prediction on disk -- postprocessing is local and the
-            # report call is text-only, so this costs no image inference.
-            # Skipping outright here is what silently ended a 40-prediction /
-            # 0-report run.
-            report_path = (os.path.join(args.reports_out_dir, f"{case_id}.txt")
-                           if args.reports_out_dir else None)
+            # The prediction is done, but its derived summary may not be (an
+            # earlier run died before the summary stage, or ran without the
+            # flag). Build it from the prediction on disk -- postprocessing is
+            # local, so this costs no inference. Skipping outright here is what
+            # silently ended a 40-prediction / 0-summary run.
             summary_path = (os.path.join(args.summaries_out_dir, f"{case_id}_summary.json")
                             if args.summaries_out_dir else None)
-            need_report = bool(report_path) and not os.path.exists(report_path)
             need_summary = bool(summary_path) and not os.path.exists(summary_path)
 
-            if (need_report or need_summary) and not args.dry_run:
-                missing = ", ".join(m for m, need in
-                                    (("summary", need_summary), ("report", need_report))
-                                    if need)
-                print(f"[fill] {case_id} (prediction exists, missing: {missing})",
+            if need_summary and not args.dry_run:
+                print(f"[fill] {case_id} (prediction exists, missing: summary)",
                       file=sys.stderr)
                 try:
                     prediction = json.loads(Path(out_path).read_text())
                 except Exception as e:
                     print(f"  [FAIL] {case_id}: unreadable prediction {out_path}: {e}",
                           file=sys.stderr)
-                    REPORT_FAILURES.append((case_id, f"unreadable prediction: {e}"))
+                    FILL_FAILURES.append((case_id, f"unreadable prediction: {e}"))
                     continue
                 prediction.setdefault("case_id", case_id)
 
-                summary = None
-                if need_summary:
-                    summary = write_summary_for_case(prediction, args.summaries_out_dir)
-                if need_report:
-                    write_report_for_case(client, args.model, prediction,
-                                          args.reports_out_dir,
-                                          debug=not args.no_debug, summary=summary)
+                write_summary_for_case(prediction, args.summaries_out_dir)
                 filled_in += 1
                 continue
 
@@ -1637,7 +1523,6 @@ if __name__ == "__main__":
         try:
             process_case(client, args.model, rec, args.out_dir,
                          dry_run=args.dry_run, debug=not args.no_debug,
-                         reports_out_dir=args.reports_out_dir,
                          summaries_out_dir=args.summaries_out_dir,
                          max_concurrency=args.max_concurrency)
             processed += 1
@@ -1648,13 +1533,13 @@ if __name__ == "__main__":
     print(f"\n[INFO] Done: {processed} processed, {filled_in} filled in from an "
           f"existing prediction, {skipped} skipped", file=sys.stderr)
 
-    if REPORT_FAILURES:
-        print(f"[WARN] {len(REPORT_FAILURES)} case(s) produced a prediction but NO "
-              f"report -- predictions/ and synthesized_reports/ will not match:",
+    if FILL_FAILURES:
+        print(f"[WARN] {len(FILL_FAILURES)} case(s) produced a prediction but NO "
+              f"summary -- predictions/ and summaries/ will not match:",
               file=sys.stderr)
-        for case_id, err in REPORT_FAILURES:
+        for case_id, err in FILL_FAILURES:
             print(f"[WARN]   {case_id}: {err}", file=sys.stderr)
-        print("[WARN] Re-run just the report stage on the existing predictions with:",
+        print("[WARN] Rebuild the summaries and reports from the predictions with:",
               file=sys.stderr)
-        print("[WARN]   python code/arms/generate_report_from_pred.py --pred-dir <dir> "
-              "--out-dir <dir> --vllm-url ... --model ...", file=sys.stderr)
+        print("[WARN]   code/pipeline/postprocess/postprocess_now.sh <run_dir>",
+              file=sys.stderr)
