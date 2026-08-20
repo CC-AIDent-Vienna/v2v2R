@@ -41,25 +41,12 @@ throwing away most of P, and every arm measured here has wanted more rows
 rather than better-shaped ones; the skew is a property of the challenge's own
 training split, and the gate is where it is corrected for.
 
-WHAT USED TO BE HERE
-────────────────────
-A GT-quality selector: `--ranking` took survey_gt_quality.py's
-case_ranking_*.csv and cut `narrow` (score >=0.90) and `wide` (>=0.80) pools
-out of it, with --per-prefix-top to rebalance them. It was removed on
-2026-08-20. Arm 6 -- the 0.4658 arm, and every arm since arm 5 -- trains on the
-whole split, so the selector chose nothing; what it did do was make the pool
-unbuildable without a second pipeline over the reference reports, and with it
-train_minus_heldout.txt, and with that any training run at all
-(train_vision_lora.py's §0b guard treats a missing heldout.txt as a failure,
-by design). `git log` has it if a quality-selected arm is ever wanted again.
-
-One consequence to know when comparing against arm 6: its own 24 held-out
-cases came out of that ranked >=0.80 pool, so a draw over all 582 does not land
-on the same names. The counts and the 6/6/6/6 shape are identical, and the
-held-out set is the eval-loss gate rather than a scored artifact -- the 0.4658
-is validate-40, which neither draw can touch -- so what differs is which 558
-cases a rebuild trains on, not what it is measured against. Byte-exact
-reproduction of arm 6's split needs arm 6's heldout.txt, not this file.
+Arm 6's own 24 held-out cases are not the 24 this draws, so the two are not
+byte-comparable: same 6/6/6/6 shape, different names. The gate is the eval-loss
+curve rather than a scored artifact -- the 0.4658 is validate-40, which no draw
+here can touch -- so what differs is which 558 cases a rebuild trains on, not
+what it is measured against. Reproducing arm 6's split exactly needs arm 6's
+own heldout.txt.
 
 Usage:
     python code/train/select_sft_pool.py --out-dir outputs/training_results/sft_pool
