@@ -66,7 +66,7 @@ add_code_paths()
 ROOT = REPO_ROOT
 
 import run_vqa_inference as RVI                              # noqa: E402
-from build_fewshot_exemplars import PERCEIVE_SYSTEM          # noqa: E402
+from evidence_prompts import PERCEIVE_SYSTEM                 # noqa: E402
 
 
 def judge(client, model, call: dict, text: str, max_tokens: int):

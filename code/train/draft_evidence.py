@@ -74,7 +74,7 @@ add_code_paths()
 ROOT = REPO_ROOT
 
 import run_vqa_inference as RVI                       # noqa: E402
-from build_fewshot_exemplars import (                 # noqa: E402  -- one copy of the prompt
+from evidence_prompts import (                        # noqa: E402  -- one copy of the prompt
     DRAFT_SYSTEM, DRAFT_USER_TEMPLATE,
 )
 from build_sft_targets import (                       # noqa: E402  -- one copy of the mask
