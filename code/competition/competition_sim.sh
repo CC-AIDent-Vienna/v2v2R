@@ -39,6 +39,13 @@
 #   sbatch code/competition/competition_sim.sh [CASE_ID] [SPLIT]
 #   CASE=A008 SPLIT=validate sbatch code/competition/competition_sim.sh
 #
+# ONE CASE, AND THAT IS THE POINT OF THIS SCRIPT. competition_runner.py also
+# takes --dataset-dir and runs a whole split on one model load, but a batch run
+# cannot answer the question here: the budget is per CONTAINER START, and a
+# server shared across forty cases has already stopped simulating the thing.
+# For a split, call the runner directly, or use gen_images_cpu.sh (renders on
+# the CPU partition, in parallel) followed by pool_infer.sh.
+#
 # THE INPUTS ARE UPSTREAM'S, AND THE AUDIT IS THE GATE
 #   The mask AND the facts both come from the segmentation component (the pools
 #   dataset/source/predictions and dataset/source/facts_all_622_cases_new,

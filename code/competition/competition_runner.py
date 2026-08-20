@@ -2,24 +2,40 @@
 """
 code/competition/competition_runner.py
 
-ONE case, start to finished report, under the Grand Challenge shape: a fresh
-container, an A10G-class card, and 15 minutes of wall clock for everything.
+One case or a whole split, start to finished report.
 
-WHY THIS EXISTS RATHER THAN aksssr_pipeline.sh
+ONE CASE is the shape it was written for -- Grand Challenge gives a fresh
+container, an A10G-class card, and 15 minutes of wall clock for everything --
+and that constraint is what makes the schedule below worth having.
+
+A WHOLE SPLIT is the same code with the case loop around the CPU half:
+--dataset-dir instead of --volume/--mask, and the four stages after rendering
+are already directory-shaped, so they run once over every case rather than once
+per case. The model then loads once for forty cases instead of forty times,
+which is the only thing that ever made a batch driver a separate script. What
+it does NOT do is render cases in parallel -- one case at a time, its four
+generators concurrent -- so for a big split the faster front half is still
+gen_images_cpu.sh on a CPU partition, and pool_infer.sh over the qa_pairs.jsonl
+it writes. Batch here is for when one command is worth more than the wall
+clock.
+
+WHAT THE 15-MINUTE BUDGET BOUGHT EVERYONE ELSE
 ──────────────────────────────────────────────
-The research pipeline is built for throughput over 40 cases and its startup cost
-amortises to nothing. Here the container starts once PER CASE, so every second of
-model load is charged to the only case that will ever run, and three of that
-script's habits become expensive:
+A pipeline built for throughput over 40 cases amortises its startup to nothing,
+and three habits follow from that which are expensive the moment the container
+starts once PER CASE:
 
-  1. it generates all images, THEN starts vLLM -- two serial waits where the
-     first needs no GPU and the second needs no CPU;
-  2. it `sleep 90` before the first health check, then polls every 10 s, so a
+  1. generate all images, THEN start vLLM -- two serial waits where the first
+     needs no GPU and the second needs no CPU;
+  2. `sleep 90` before the first health check, then poll every 10 s, so a
      server that came up at 40 s is not noticed until 90;
-  3. concurrency is a fixed number chosen for an A100.
+  3. concurrency fixed at a number chosen for an A100.
 
 This runner overlaps (1), polls /health every 0.5 s for (2), and sizes
-concurrency off the KV cache the server actually reports for (3).
+concurrency off the KV cache the server actually reports for (3). None of the
+three is worth less in batch: (1) hides the whole model load behind the first
+case's rendering, and (3) is the difference between using the KV pool and
+guessing at it.
 
 THE OVERLAP, AND WHAT LIMITS IT
 ───────────────────────────────
@@ -60,6 +76,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import re
 import shutil
 import subprocess
@@ -123,18 +140,37 @@ class Phases:
             if t is not None:
                 self.spans.append((name, t - self.t0, time.time() - self.t0))
 
+    def collapsed(self) -> List[tuple]:
+        """One row per phase NAME, so a 40-case batch prints five rendering
+        rows rather than two hundred. A name that occurs once collapses to
+        itself, which is why single-case output is unchanged: earliest start,
+        latest end, and the summed occupancy in `secs` -- summed, not
+        end-minus-start, because between two cases' img:panoramic spans the
+        phase is not running."""
+        agg: Dict[str, list] = {}
+        for name, s, e in self.spans:
+            row = agg.setdefault(name, [name, s, e, 0.0, 0])
+            row[1] = min(row[1], s)
+            row[2] = max(row[2], e)
+            row[3] += e - s
+            row[4] += 1
+        return sorted(agg.values(), key=lambda r: r[1])
+
     def table(self) -> str:
         total = time.time() - self.t0
-        width = max((len(n) for n, _, _ in self.spans), default=10)
+        rows = self.collapsed()
+        labels = {r[0] if r[4] == 1 else f"{r[0]} x{r[4]}" for r in rows}
+        width = max((len(n) for n in labels), default=10)
         out = [f"{'phase':{width}}  {'start':>7} {'end':>7} {'secs':>7}   timeline"]
         out.append("-" * (width + 34 + 40))
-        for name, s, e in sorted(self.spans, key=lambda r: r[1]):
+        for name, s, e, secs, n in rows:
+            name = name if n == 1 else f"{name} x{n}"
             # A crude gantt: where this span sits inside the whole run. The
             # overlap is the thing being demonstrated, so it has to be visible.
             bar_start = int(40 * s / total) if total else 0
             bar_len = max(1, int(40 * (e - s) / total)) if total else 1
             bar = " " * bar_start + "#" * bar_len
-            out.append(f"{name:{width}}  {s:7.1f} {e:7.1f} {e - s:7.1f}   {bar}")
+            out.append(f"{name:{width}}  {s:7.1f} {e:7.1f} {secs:7.1f}   {bar}")
         out.append(f"{'TOTAL':{width}}  {0:7.1f} {total:7.1f} {total:7.1f}")
         return "\n".join(out)
 
@@ -407,20 +443,104 @@ def generate_images(case: str, volume: Path, mask: Path, facts: Optional[Path],
                   phases, "img:composites")
 
 
+def resolve_cases(args) -> List[tuple]:
+    """(case_id, volume, mask, facts_in) for every case this run covers.
+
+    Two shapes, and they are exclusive rather than merged: --case-id names one
+    case and its three files explicitly, which is what a container is handed;
+    --dataset-dir names a split and the files are found by the layout
+    convention. A run that accepted both would have to decide which wins, and
+    the answer would be a footnote instead of an error.
+    """
+    if args.case_id:
+        return [(args.case_id, args.volume, args.mask, args.facts_file)]
+
+    root = args.dataset_dir
+    images, masks = root / "images", root / "masks"
+    if not images.is_dir():
+        sys.exit(f"[FAIL] {images} is not a directory -- --dataset-dir wants "
+                 f"images/ and masks/ under it")
+    found = sorted(f.name[:-len("_0000.nii.gz")]
+                   for f in images.glob("*_0000.nii.gz"))
+    if args.case_list:
+        wanted = [l.strip() for l in args.case_list.read_text().splitlines()
+                  if l.strip() and not l.startswith("#")]
+    elif args.case_ids:
+        wanted = list(args.case_ids)
+    else:
+        wanted = found
+    missing = [c for c in wanted if c not in set(found)]
+    if missing:
+        sys.exit(f"[FAIL] no volume under {images} for: {missing[:8]}")
+    if args.limit:
+        # Seeded, so LIMIT=N picks the SAME N cases every run -- a smoke test
+        # that samples differently each time cannot be compared with itself.
+        rng = random.Random(args.seed)
+        wanted = sorted(rng.sample(wanted, min(args.limit, len(wanted))))
+
+    out = []
+    for c in wanted:
+        facts = root / "facts" / f"{c}.json"
+        out.append((c, images / f"{c}_0000.nii.gz", masks / f"{c}.nii.gz",
+                    facts if facts.exists() else None))
+    return out
+
+
+def already_rendered(case: str, images_dir: Path) -> bool:
+    """Has this case's whole render finished?
+
+    Keyed on {case}_coverage.json, which create_tooth_detail.py writes
+    UNCONDITIONALLY and which the last generator in generate_images() writes
+    last -- so its presence means all four ran, and its absence means at least
+    one did not.
+
+    NOT the tooth caption sidecar, which is the obvious choice and is wrong:
+    create_tooth_detail.py writes it only `if captions`, so an edentulous case
+    finishes perfectly and leaves none. 4 of the 40 validate cases are like
+    that, and keying on it would re-render each of them on every resumed run
+    while reporting nothing amiss."""
+    return (images_dir / f"{case}_coverage.json").exists()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--case-id", required=True)
-    ap.add_argument("--volume", type=Path, required=True)
-    ap.add_argument("--mask", type=Path, required=True)
+    ap.add_argument("--case-id",
+                    help="ONE case, with --volume/--mask given explicitly. "
+                         "This is the container shape. Mutually exclusive with "
+                         "--dataset-dir.")
+    ap.add_argument("--volume", type=Path)
+    ap.add_argument("--mask", type=Path)
     ap.add_argument("--facts-file", type=Path,
                     help="The case's facts, from upstream. Audited against the "
                          "mask before use; the original is never written to. "
                          "Omit to derive them here with extract_facts.py.")
+    ap.add_argument("--dataset-dir", type=Path,
+                    help="A SPLIT: dataset/validate, holding images/ masks/ "
+                         "and optionally facts/. Every case in it runs, sharing "
+                         "one vLLM load. Files are found by the layout "
+                         "convention -- {case}_0000.nii.gz, {case}.nii.gz, "
+                         "{case}.json.")
+    ap.add_argument("--case-ids", nargs="+", help="restrict --dataset-dir to these")
+    ap.add_argument("--case-list", type=Path,
+                    help="restrict --dataset-dir to the case ids in this file, "
+                         "one per line")
+    ap.add_argument("--limit", type=int,
+                    help="smoke test: a seeded sample of --dataset-dir")
+    ap.add_argument("--seed", type=int, default=42,
+                    help="which cases --limit picks (default 42, so the same "
+                         "ones every run)")
+    ap.add_argument("--resume", action="store_true",
+                    help="skip a case whose images and prediction already "
+                         "exist. Rendering is the expensive half of a batch "
+                         "run and a killed job should not repeat it.")
     ap.add_argument("--no-facts", action="store_true",
                     help="No facts at all: captions carry none and the source "
                          "rules stay off. The NO_FACTS=1 arm.")
-    ap.add_argument("--out-dir", type=Path, required=True)
+    ap.add_argument("--out-dir", type=Path, required=True,
+                    help="images/, facts/, predictions/, summaries/ and "
+                         "reports/ are written under here, one set for the "
+                         "whole run rather than one per case")
     ap.add_argument("--model", required=True,
                     help="path INSIDE the container. The shipping model is the "
                          "trained arm, models/best_model (the LoRA merged "
@@ -443,10 +563,23 @@ def main() -> None:
                     help="images and timing only; skip vLLM entirely")
     args = ap.parse_args()
 
+    if bool(args.case_id) == bool(args.dataset_dir):
+        ap.error("give either --case-id (with --volume and --mask) or "
+                 "--dataset-dir, not both and not neither")
+    if args.case_id and not (args.volume and args.mask):
+        ap.error("--case-id needs --volume and --mask")
+
     phases = Phases()
     out_dir = args.out_dir
     images_dir = out_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolved BEFORE the server starts: a typo in --case-list should cost a
+    # second, not a model load.
+    cases = resolve_cases(args)
+    if len(cases) > 1:
+        print(f"[INFO] {len(cases)} case(s): {', '.join(c[0] for c in cases[:6])}"
+              f"{' ...' if len(cases) > 6 else ''}", file=sys.stderr)
 
     server: Optional[VLLMServer] = None
     server_err: List[BaseException] = []
@@ -477,14 +610,39 @@ def main() -> None:
     # --facts-file IS the competition path: upstream hands over the mask and
     # the facts together. Omitting it falls back to deriving them here, which
     # is the same information at ~65 s instead of ~2 s.
-    facts_file = None
-    if not args.no_facts:
-        facts_file = prepare_facts(args.case_id, args.mask, args.facts_file,
-                                   out_dir, phases)
-
+    #
+    # Both facts and images are written per case into ONE directory each, which
+    # is what makes the batch loop this small: prepare_facts() already audits
+    # --cases <this one> so a reused out-dir does not re-audit its
+    # predecessors, and every stage after the loop is directory-shaped
+    # already.
+    facts_dir: Optional[Path] = None
     phases.start("images:total")
-    generate_images(args.case_id, args.volume, args.mask, facts_file,
-                    images_dir, phases)
+    for case, volume, mask, facts_in in cases:
+        # --resume needs BOTH halves present. The audited facts are checked
+        # separately from the images because postprocess reads the facts
+        # DIRECTORY: one case missing its copy turns the source rules off for
+        # that case and says nothing. The audit is not free either -- it reads
+        # the mask, which is tens of seconds on a network filesystem, not the
+        # ~2 s it costs a container with the volume on local disk.
+        facts_target = out_dir / "facts" / f"{case}.json"
+        have_facts = args.no_facts or facts_target.exists()
+        if args.resume and already_rendered(case, images_dir) and have_facts:
+            if not args.no_facts:
+                facts_dir = facts_target.parent
+            print(f"[skip] {case} (images and facts present)", file=sys.stderr)
+            continue
+
+        if len(cases) > 1:
+            print(f"[case] {case}", file=sys.stderr)
+        facts_file = None
+        if not args.no_facts:
+            facts_file = prepare_facts(case, mask, facts_in, out_dir, phases)
+            if facts_file is not None:
+                facts_dir = Path(facts_file).parent
+        if args.resume and already_rendered(case, images_dir):
+            continue
+        generate_images(case, volume, mask, facts_file, images_dir, phases)
     phases.end("images:total")
 
     if server:
@@ -497,16 +655,28 @@ def main() -> None:
     # ── qa_pairs, then inference ────────────────────────────────────────────
     phases.start("qa_pairs")
     qa_jsonl = out_dir / "qa_pairs.jsonl"
+    # --cases, always, and not because the images dir usually holds only what
+    # this run rendered. It does in a container; it does not when an out-dir is
+    # reused or --resume points at a whole split's images, and build_vqa_pairs
+    # plans from the FILES ON DISK. Without it, asking for three cases and
+    # getting forty is silent -- the payload is well-formed, just not the one
+    # that was requested, and the extra thirty-seven are then inferred.
     subprocess.run([sys.executable, str(module_path("build_vqa_pairs.py")),
                     "--images-dir", str(images_dir), "--schema", str(args.schema),
-                    "--out", str(qa_jsonl), "--project-dir", str(args.project_dir)],
+                    "--out", str(qa_jsonl), "--project-dir", str(args.project_dir),
+                    "--cases"] + [c[0] for c in cases],
                    check=True, capture_output=True, text=True)
     phases.end("qa_pairs")
 
     n_calls = 0
     if qa_jsonl.exists():
-        rec = json.loads(qa_jsonl.read_text(encoding="utf-8").splitlines()[0])
-        n_calls = sum(len(rec.get(k) or {}) for k in ("global", "dental_elements"))
+        # The BIGGEST case, not the first: concurrency is sized so one case's
+        # calls fit the KV pool, and under-sizing on a 20-tooth case would
+        # queue the 32-tooth one behind itself.
+        for line in qa_jsonl.read_text(encoding="utf-8").splitlines():
+            rec = json.loads(line)
+            n_calls = max(n_calls, sum(len(rec.get(k) or {})
+                                       for k in ("global", "dental_elements")))
 
     if not args.no_server:
         conc, why = ((args.max_concurrency, "set by --max-concurrency")
@@ -520,7 +690,8 @@ def main() -> None:
                         "--base-dir", str(args.project_dir),
                         "--model", "qwen3.5-vl",
                         "--vllm-url", f"http://127.0.0.1:{args.port}/v1",
-                        "--max-concurrency", str(conc)],
+                        "--max-concurrency", str(conc)]
+                       + (["--resume"] if args.resume else []),
                        check=True)
         phases.end("inference")
 
@@ -532,8 +703,8 @@ def main() -> None:
         post = [sys.executable, str(module_path("postprocess_pred.py")),
                 "--pred-dir", str(out_dir / "predictions"),
                 "--out-dir", str(out_dir / "summaries")]
-        if facts_file is not None:
-            post += ["--facts-dir", str(Path(facts_file).parent)]
+        if facts_dir is not None:
+            post += ["--facts-dir", str(facts_dir)]
         subprocess.run(post, check=True)
         phases.end("postprocess")
 
@@ -547,7 +718,9 @@ def main() -> None:
 
     # ── the report ──────────────────────────────────────────────────────────
     print("\n" + "=" * 78)
-    print(f"COMPETITION SIMULATION -- case {args.case_id}")
+    print("COMPETITION SIMULATION -- "
+          + (f"case {cases[0][0]}" if len(cases) == 1
+             else f"{len(cases)} cases, one server"))
     print("=" * 78)
     print(phases.table())
     if server:
@@ -568,8 +741,18 @@ def main() -> None:
                   "   <- spawn, imports, CUDA context, API server bind")
     total = time.time() - phases.t0
     budget = 15 * 60
-    print(f"\n{'WITHIN' if total < budget else 'OVER'} the 15-minute budget: "
-          f"{total:.0f}s of {budget}s ({100 * total / budget:.0f}%)")
+    if len(cases) == 1:
+        print(f"\n{'WITHIN' if total < budget else 'OVER'} the 15-minute budget: "
+              f"{total:.0f}s of {budget}s ({100 * total / budget:.0f}%)")
+    else:
+        # The 15-minute budget is per CONTAINER START, and a batch run starts
+        # one server for all of them -- so the budget does not apply and
+        # printing it against the total would be a meaningless failure. What a
+        # batch run says about the budget is the per-case cost with the load
+        # already paid, which is the optimistic half of it.
+        print(f"\n{len(cases)} cases in {total:.0f}s -- {total / len(cases):.0f}s "
+              f"per case with the model load shared. The 15-minute budget is "
+              f"per container start; use --case-id to measure it.")
 
 
 if __name__ == "__main__":

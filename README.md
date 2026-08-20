@@ -66,8 +66,8 @@ that is fine.
 
 ```
 code/
-  competition/      ONE case, start to finished report — the inference path,
-                    driven end to end by competition_runner.py
+  competition/      the inference path, driven end to end by
+                    competition_runner.py — one case or a whole split
   pipeline/
     segmentation/   stage 1 — NOT in this repo; the interface it must satisfy,
                     plus the facts audit that reconciles it against the mask
@@ -124,12 +124,13 @@ prediction, which is what `structured_findings_evaluation.py` scores against.
 
 ## Run it
 
-**One case, start to finished report.** `competition_runner.py` is the whole
-inference path in one process: it audits the facts against the mask, renders,
-builds the VQA calls, runs them, post-processes and writes the report —
-starting vLLM first and loading it *while* the images render, because the
-container it was written for gets 15 minutes per case and pays the model load
-out of them.
+`competition_runner.py` is the whole inference path in one process: it audits
+the facts against the mask, renders, builds the VQA calls, runs them,
+post-processes and writes the report — starting vLLM first and loading it
+*while* the images render, because the container it was written for gets 15
+minutes per case and pays the model load out of them.
+
+**One case** — the container shape, files named explicitly:
 
 ```bash
 python code/competition/competition_runner.py \
@@ -139,22 +140,38 @@ python code/competition/competition_runner.py \
     --facts-file dataset/validate/facts/A008.json \
     --model   models/Qwen3.5-9B-AWQ \
     --out-dir outputs/one_case
-
---no-server        # render and time only; skip vLLM entirely
---report-timing    # per-phase table, with vLLM's own startup milestones
 ```
 
-It prints where the time went, phase by phase, which is the point: "vLLM took
-11 minutes" is not actionable, "9 of those 11 were graph capture" is.
-`competition_sim.sh` runs it under SLURM on a 24 GiB card, the Grand Challenge
-envelope. [docs/competition_pipeline.md](docs/competition_pipeline.md) has the
-schedule and the facts-audit rationale.
-
-**A whole split**, which is what the scored numbers above come from. The same
-stages, but the model loads once for forty cases instead of once each:
+**A whole split** — same code, the case loop around the CPU half, and the model
+loads once for forty cases instead of forty times. The four stages after
+rendering are directory-shaped already, so they run once over all of them:
 
 ```bash
-# 1. render + qa_pairs.jsonl, on the CPU partition — no GPU held while rendering
+python code/competition/competition_runner.py \
+    --dataset-dir dataset/validate \
+    --model   models/Qwen3.5-9B-AWQ \
+    --out-dir outputs/my_arm_validate
+
+--case-ids A008 A018      # or --case-list FILE, or --limit N (seeded by --seed)
+--resume                  # skip cases whose images and audited facts exist
+--no-server               # render and time only; skip vLLM entirely
+```
+
+Either way it prints where the time went, phase by phase, which is the point:
+"vLLM took 11 minutes" is not actionable, "9 of those 11 were graph capture"
+is. `competition_sim.sh` runs the one-case form under SLURM on a 24 GiB card,
+the Grand Challenge envelope — the budget is per container start, so a batch
+run cannot answer that question.
+[docs/competition_pipeline.md](docs/competition_pipeline.md) has the schedule
+and the facts-audit rationale.
+
+**For a large split, render separately.** The runner does one case at a time
+(its four generators concurrent), so forty cases of rendering are serial. The
+CPU partition does them in parallel and holds no GPU while it works, which is
+where the scored numbers come from:
+
+```bash
+# 1. render + qa_pairs.jsonl, on the CPU partition
 sbatch code/pipeline/preprocess/gen_images_cpu.sh validate
 #    LIMIT=5 for a smoke run; SEED=42 pins which cases
 # 2. inference (the only GPU stage), then postprocess + the fact-level survey
