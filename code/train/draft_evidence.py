@@ -2,11 +2,9 @@
 """
 draft_evidence.py -- the teacher writes visual_evidence for answers it is handed.
 
-docs/vision_sft_plan.md §3.3, at pool scale. build_fewshot_exemplars.py does this for
-a handful of exemplar files with a human reading every one; this does it for the
-~1,850 tooth calls of the SFT pool, and imports that file's DRAFT_SYSTEM and
-DRAFT_USER_TEMPLATE rather than restating them -- two copies of a prompt drift,
-and the drift is invisible.
+The teacher pass, at pool scale: ~1,850 tooth calls. DRAFT_SYSTEM and
+DRAFT_USER_TEMPLATE come from evidence_prompts.py rather than being restated
+here -- two copies of a prompt drift, and the drift is invisible.
 
 WHAT THE TEACHER IS AND IS NOT ASKED
 ────────────────────────────────────

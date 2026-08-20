@@ -2,10 +2,10 @@
 """
 check_evidence_perceivable.py -- can the STUDENT see what the teacher described?
 
-docs/vision_sft_plan.md §3.3's screen, at pool scale. build_fewshot_exemplars.py
---check-perceivable does this for a handful of exemplars with a human rewriting
-the failures; here it runs over every drafted evidence string and reports a rate
-per field, because at ~1,850 calls nobody rewrites anything by hand.
+The screen that follows the teacher pass, at pool scale: it runs over every
+drafted evidence string and reports a rate per field, because at ~1,850 calls
+nobody rewrites anything by hand. The prompt is PERCEIVE_SYSTEM, from
+evidence_prompts.py.
 
 WHY THIS IS THE LOAD-BEARING CHECK
 ──────────────────────────────────

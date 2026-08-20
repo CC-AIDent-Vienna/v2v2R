@@ -1,123 +1,75 @@
 #!/usr/bin/env python3
 """
-select_sft_pool.py -- the training pool for docs/vision_sft_plan.md §3.5, as a file.
+select_sft_pool.py -- the training pool, as three case lists.
 
-Turns `outputs/gt_quality_training/case_ranking_*.csv` + `audit_report_facts.py`
-into three case lists -- narrow, wide, held-out -- and prints the composition of
-each, because composition is the part that goes wrong quietly.
+The pool is the whole training split. This file writes `all_cases.txt`, holds
+out a stratified gate into `heldout.txt`, and writes the complement --
+`train_minus_heldout.txt`, which is what vision_sft.sh takes as --case-list.
+It prints the composition of each, because composition is the part that goes
+wrong quietly.
 
-WHY THIS IS NOT A ONE-LINE `awk`
-────────────────────────────────
-Three things have to be true at once and only one of them is a threshold.
+TWO THINGS ARE CHECKED, NEITHER OF THEM A THRESHOLD
+───────────────────────────────────────────────────
+1. SPLIT. Nothing from `dataset/validate` may appear, ever. The pool is read
+   from dataset/training so this cannot fire today, but it is checked rather
+   than assumed: the cost of the check is a directory listing and the cost of
+   the assumption is an experiment whose headline number is invalid.
 
-1. GT QUALITY. `score_asis` from the ranking file, the same number
-   survey_gt_quality.py produced. Narrow is >=0.90, wide is >=0.80.
+2. AUDIT-CLEAN, if asked. A case whose report_facts carries an ERROR from
+   audit_report_facts.py is a case whose labels are known-wrong. Passed in via
+   --audit-json, and optional -- arm 6 passed nothing, so no case was excluded.
 
-2. AUDIT-CLEAN. A case whose report_facts still carries an ERROR from
-   audit_report_facts.py is a case whose labels are known-wrong, and the
-   ranking score does not know that. Passed in via --audit-json.
-
-3. SPLIT. Nothing from `dataset/validate` may appear, ever -- plan §0. The
-   ranking file is training-only so this cannot fire today, but it is checked
-   rather than assumed: the cost of the check is a directory listing and the
-   cost of the assumption is an experiment whose headline number is invalid.
-
-THE PREFIX PROBLEM, WHICH IS THE REAL REASON THIS FILE EXISTS
-─────────────────────────────────────────────────────────────
+WHY THE HELD-OUT SET IS STRATIFIED AND THE POOL IS NOT
+──────────────────────────────────────────────────────
 Case IDs carry their sub-dataset in the prefix letter, and the four differ in
-scanner, field of view and reconstruction. Training is 69% P. Validate is
-10/10/10/10 -- exactly 25% each. And the GT-quality threshold makes it worse
-rather than better, because P's reports are the ones that extract cleanly:
+scanner, field of view and reconstruction. Training is 69% P; validate is
+10/10/10/10, exactly 25% each:
 
-    prefix   all training   pool >=0.80   validate
-    A            15%             6%         25%
-    F             9%             8%         25%
-    P            69%            78%         25%
-    S             7%             9%         25%
+    prefix   all training   validate
+    A            15%          25%
+    F             9%          25%
+    P            69%          25%
+    S             7%          25%
 
-For a language arm that is a mild nuisance. For arm 2 -- which trains the
-vision encoder, the one component that sees scanner physics rather than words
--- fitting on 78% P and scoring on 25% P is a way to produce a real perceptual
-gain that the official metric cannot see, or a real regression on A/F/S that a
-P-heavy gain hides. Neither is a finding about H1.
+Held-out is the decision gate -- the number an arm is judged on before it costs
+a validate run -- and a gate that reads a 69%-P sample to predict a 25%-P
+result is not a gate. So it is drawn --heldout-per per prefix, 6 by default,
+giving validate's own 6/6/6/6 shape.
 
-THE CHOSEN ANSWER, AND WHY IT IS NOT `--stratify`
-─────────────────────────────────────────────────
-Balancing the >=0.80 pool directly is useless: it collapses wide from 198 cases
-to 28, because A/F/S run out long before P does. The skew is not the
-threshold's doing -- the split is 70% P even at threshold 0 -- so no threshold
-fixes it.
+The TRAINING pool is deliberately not balanced to match. Balancing it means
+throwing away most of P, and every arm measured here has wanted more rows
+rather than better-shaped ones; the skew is a property of the challenge's own
+training split, and the gate is where it is corrected for.
 
---per-prefix-top N inverts the order instead: rank WITHIN each prefix and take
-the best N of each. The ceiling is the scarcest prefix (audit-clean: A 83,
-F 41, P 385, S 40), so a balanced pool tops out near 40/prefix, and the price
-is paid in GT quality by exactly the prefixes that are scarce:
-
-    N/prefix   cases   calls    A floor  F floor  P floor  S floor
-        30      120    2,340      0.71     0.68     1.00     0.71
-        34      136    2,652      0.71     0.58     1.00     0.67
-        40      160    3,120      0.67     0.31     1.00     0.46
-
-Past ~34 the balance is bought with labels that are simply bad, so 30 is the
-default. P's floor stays 1.00 throughout: it has 385 audit-clean cases and only
-needs its best 30.
-
-Held-out and training are drawn from the SAME per-prefix band (the top N+H) and
-split at random within it, not by taking the best H for the gate. A held-out
-set made of each prefix's cleanest cases would report a gate number the
-training distribution cannot reproduce -- flattering, and in the direction that
-makes a null look like a result.
-
-The held-out set is stratified REGARDLESS of --per-prefix-top. It is what the
-stage-C decision gate reads, and a gate that reads a 78%-P sample to predict a
-25%-P result is not a gate. That one is not a knob.
-
-WITHOUT --ranking: THE ARM-6 MODE, AND THE ONE THE RELEASE NEEDS
-────────────────────────────────────────────────────────────────
-Everything above selects a pool by GT quality, and arm 6 -- the 0.4658 arm --
-does not use one. It trains on the whole training split minus the held-out
-gate, so the only thing it needs from this file is the held-out set: a
-stratified 6-per-prefix draw, and the complement of it.
-
-So --ranking is optional. Without it there is no score to rank by, the pool is
-every case under dataset/training/images, and the three files written are
-`all_cases.txt`, `heldout.txt` and `train_minus_heldout.txt` -- the last being
-what vision_sft.sh takes as --case-list. narrow/wide are not written, because
-narrow and wide are defined by the score thresholds and there is no score.
-
-That matters beyond convenience: `--ranking` takes survey_gt_quality.py's
-case_ranking_*.csv, and reproducing that is a second pipeline over the
-reference reports. The arm-6 path does not need it, and a release that made it
-mandatory made train_minus_heldout.txt unobtainable and training unrunnable
+WHAT USED TO BE HERE
+────────────────────
+A GT-quality selector: `--ranking` took survey_gt_quality.py's
+case_ranking_*.csv and cut `narrow` (score >=0.90) and `wide` (>=0.80) pools
+out of it, with --per-prefix-top to rebalance them. It was removed on
+2026-08-20. Arm 6 -- the 0.4658 arm, and every arm since arm 5 -- trains on the
+whole split, so the selector chose nothing; what it did do was make the pool
+unbuildable without a second pipeline over the reference reports, and with it
+train_minus_heldout.txt, and with that any training run at all
 (train_vision_lora.py's §0b guard treats a missing heldout.txt as a failure,
-by design).
+by design). `git log` has it if a quality-selected arm is ever wanted again.
 
---audit-json still applies in both modes and is still optional. Arm 6 passed
-neither, i.e. no case was excluded.
-
-The 24 held-out cases this mode draws are NOT arm 6's own 24: arm 6's came out
-of the ranked >=0.80 pool, and a draw over all 582 cannot land on the same
-names. The counts and the 6/6/6/6 shape are identical, and the held-out set is
-the eval-loss gate rather than a scored artifact -- the 0.4658 is validate-40,
-which neither draw can touch -- so what this changes is which 558 cases a
-rebuild trains on, not what it is measured against. Byte-exact reproduction of
-arm 6's split needs arm 6's heldout.txt, not this file.
+One consequence to know when comparing against arm 6: its own 24 held-out
+cases came out of that ranked >=0.80 pool, so a draw over all 582 does not land
+on the same names. The counts and the 6/6/6/6 shape are identical, and the
+held-out set is the eval-loss gate rather than a scored artifact -- the 0.4658
+is validate-40, which neither draw can touch -- so what differs is which 558
+cases a rebuild trains on, not what it is measured against. Byte-exact
+reproduction of arm 6's split needs arm 6's heldout.txt, not this file.
 
 Usage:
-    # arm 6: no ranking, no audit -- the whole split minus the gate
     python code/train/select_sft_pool.py --out-dir outputs/training_results/sft_pool
-
-    # GT-quality selection, the narrow/wide arms
-    python code/train/select_sft_pool.py \\
-        --ranking outputs/gt_quality_training/case_ranking_20260810_232836.csv \\
-        --audit-json <audit.json> --out-dir outputs/training_results/sft_pool
+    python code/train/select_sft_pool.py --out-dir <dir> --audit-json <audit.json>
 """
 
 from __future__ import annotations
 
 import argparse
 import collections
-import csv
 import json
 import random
 import re
@@ -138,9 +90,7 @@ add_code_paths()
 
 ROOT = REPO_ROOT
 
-NARROW_MIN = 0.90
-WIDE_MIN = 0.80
-HELDOUT_N = 25
+HELDOUT_PER = 6      # per prefix -> 24, matching validate's 10/10/10/10 shape
 
 
 def case_of(text: str) -> str | None:
@@ -177,15 +127,15 @@ def audit_error_cases(path: Path | None) -> set[str]:
 
 
 def validate_case_ids() -> set[str]:
-    """Every case id under dataset/validate. Plan §0's hard boundary."""
+    """Every case id under dataset/validate. The hard boundary."""
     d = ROOT / "dataset/validate/images"
     return {c for c in (case_of(p.name) for p in d.glob("*_0000.nii.gz")) if c}
 
 
 def training_case_ids() -> set[str]:
-    """Every case id under dataset/training -- the pool when there is no
-    ranking to select from. Read from the volumes rather than from a list
-    file, so it cannot disagree with what the renderers will find."""
+    """Every case id under dataset/training -- the pool. Read from the volumes
+    rather than from a list file, so it cannot disagree with what the renderers
+    will find."""
     d = ROOT / "dataset/training/images"
     ids = {c for c in (case_of(p.name) for p in d.glob("*_0000.nii.gz")) if c}
     if not ids:
@@ -197,7 +147,7 @@ def composition(cases) -> dict:
     return dict(sorted(collections.Counter(c[0] for c in cases).items()))
 
 
-def fmt(cases, label: str, total_ref: int | None = None) -> str:
+def fmt(cases, label: str) -> str:
     comp = composition(cases)
     n = len(cases)
     parts = " ".join(f"{k}:{v:>3} ({100 * v / n:>3.0f}%)" for k, v in comp.items()) if n else "-"
@@ -205,45 +155,56 @@ def fmt(cases, label: str, total_ref: int | None = None) -> str:
     return f"  {label:<22} {n:>4} cases  {calls:>14}   {parts}"
 
 
-def stratify(cases, per_prefix: int | None, rng) -> list[str]:
-    """Down-sample each prefix to the scarcest one (or to `per_prefix`)."""
+def stratify(cases, per_prefix: int, rng) -> list[str]:
+    """Take `per_prefix` of each prefix, at random."""
     by = collections.defaultdict(list)
     for c in cases:
         by[c[0]].append(c)
-    k = per_prefix or min(len(v) for v in by.values())
     out = []
     for p in sorted(by):
         pool = sorted(by[p])
         rng.shuffle(pool)
-        out.extend(pool[:k])
+        if len(pool) < per_prefix:
+            print(f"  [WARN] {p}: only {len(pool)} case(s), wanted {per_prefix}")
+        out.extend(pool[:per_prefix])
     return sorted(out)
 
 
-def select_unranked(args, rng, bad: set[str], forbidden: set[str]) -> int:
-    """The arm-6 pool: no GT-quality score, so no narrow and no wide.
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--out-dir", type=Path, required=True)
+    ap.add_argument("--audit-json", type=Path,
+                    help="audit_report_facts.py --json output; cases with a "
+                         "surviving ERROR are excluded from the pool")
+    ap.add_argument("--heldout-per", type=int, default=HELDOUT_PER,
+                    help=f"held-out cases per prefix (default {HELDOUT_PER} -> "
+                         f"24 total, matching validate's 10/10/10/10 shape)")
+    ap.add_argument("--seed", type=int, default=42)
+    args = ap.parse_args()
 
-    Held-out is drawn the same way it is in every other mode -- stratified,
-    --heldout-per per prefix -- because it is the gate, and a gate that reads
-    a 69%-P sample cannot predict a 25%-P result. What changes is that the
-    training pool is its complement rather than a threshold's survivors.
-    """
+    rng = random.Random(args.seed)
+    bad = audit_error_cases(args.audit_json)
+    forbidden = validate_case_ids()
     cases = sorted(training_case_ids() - bad - forbidden)
-    H = args.heldout_per
 
-    held = stratify(cases, H, rng)[:H * 4]
+    held = stratify(cases, args.heldout_per, rng)
     held_set = set(held)
     train = [c for c in cases if c not in held_set]
 
-    print(f"[INFO] no --ranking: the pool is dataset/training in full")
+    print(f"[INFO] pool: dataset/training in full")
     print(f"[INFO] audit ERRORs exclude {len(bad)} case(s); "
           f"{len(forbidden)} validate ids are forbidden and none appeared")
     print()
-    print("SELECTED (unranked -- the arm-6 pool):")
+    print("SELECTED:")
     print(fmt(cases, "all training cases"))
     print(fmt(train, "train minus held-out"))
     print(fmt(held, "held-out (the gate)"))
     print()
 
+    # The two invariants worth crashing over. Held-out leaking into the
+    # training pool is the one that would invalidate the gate without changing
+    # any number that looks wrong.
     assert not (set(train) & held_set), "held-out leaked into training"
     assert not ((set(train) | held_set) & forbidden), "validate case in a pool"
 
@@ -259,160 +220,8 @@ def select_unranked(args, rng, bad: set[str], forbidden: set[str]) -> int:
 
     meta = args.out_dir / "pool.json"
     meta.write_text(json.dumps({
-        "ranking": None, "seed": args.seed, "stratified": False,
-        "audit_error_cases": sorted(bad),
-        "sets": written,
-    }, indent=2) + "\n", encoding="utf-8")
-    print(f"[INFO] {meta}")
-    return 0
-
-
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ranking", type=Path,
-                    help="survey_gt_quality.py's case_ranking_*.csv. Omit for "
-                         "the arm-6 pool: the whole training split minus a "
-                         "stratified held-out set, no GT-quality selection.")
-    ap.add_argument("--audit-json", type=Path,
-                    help="audit_report_facts.py --json output; cases with a "
-                         "surviving ERROR are excluded")
-    ap.add_argument("--out-dir", type=Path, required=True)
-    ap.add_argument("--stratify", action="store_true",
-                    help="balance the TRAINING pools across A/F/P/S by "
-                         "down-sampling the >=0.80 pool. Collapses it to ~28 "
-                         "cases; kept only to make that visible. Prefer "
-                         "--per-prefix-top.")
-    ap.add_argument("--per-prefix-top", type=int, metavar="N",
-                    help="rank within each prefix and take the best N for the "
-                         "wide pool, ignoring the global score thresholds. The "
-                         "balanced mode -- see the module docstring for the "
-                         "GT-quality floor each N costs.")
-    ap.add_argument("--per-prefix-narrow", type=int, metavar="K",
-                    help="narrow pool size per prefix (default: N//2), taken "
-                         "as the best K of that prefix's training allocation.")
-    ap.add_argument("--heldout-per", type=int, default=HELDOUT_N // 4,
-                    help="held-out cases per prefix (default 6 -> 24 total, "
-                         "matching validate's 10/10/10/10 shape)")
-    ap.add_argument("--seed", type=int, default=42)
-    args = ap.parse_args()
-
-    rng = random.Random(args.seed)
-    bad = audit_error_cases(args.audit_json)
-    forbidden = validate_case_ids()
-
-    if args.ranking is None:
-        return select_unranked(args, rng, bad, forbidden)
-
-    rows = list(csv.DictReader(args.ranking.open(encoding="utf-8")))
-
-    scored = {r["case_id"]: float(r.get("score_asis") or 0.0) for r in rows}
-
-    leaked = sorted(set(scored) & forbidden)
-    if leaked:
-        sys.exit(f"[FAIL] plan §0: {len(leaked)} validate case(s) in the "
-                 f"ranking file: {leaked[:10]}")
-
-    def eligible(threshold):
-        return sorted(c for c, s in scored.items()
-                      if s >= threshold and c not in bad and c not in forbidden)
-
-    wide_all = eligible(WIDE_MIN)
-    narrow_all = eligible(NARROW_MIN)
-
-    print(f"[INFO] ranking {args.ranking.name}: {len(rows)} cases")
-    print(f"[INFO] audit ERRORs exclude {len(bad)} case(s); "
-          f"{len(forbidden)} validate ids are forbidden and none appeared")
-    print()
-    print("BEFORE held-out is removed:")
-    print(fmt(narrow_all, f"narrow >={NARROW_MIN}"))
-    print(fmt(wide_all, f"wide   >={WIDE_MIN}"))
-    print()
-
-    H = args.heldout_per
-
-    if args.per_prefix_top:
-        # Balanced mode. Rank within each prefix, take the best N+H, then split
-        # that band at RANDOM into training and held-out so both see the same
-        # GT-quality distribution. Ordering by score and giving the gate the top
-        # H would make the gate easier than the task.
-        N = args.per_prefix_top
-        K = args.per_prefix_narrow or max(1, N // 2)
-        eligible_all = sorted(
-            (c for c, s in scored.items() if c not in bad and c not in forbidden),
-            key=lambda c: (-scored[c], c))
-
-        by_prefix = collections.defaultdict(list)
-        for c in eligible_all:
-            by_prefix[c[0]].append(c)
-
-        held, train_wide, train_narrow = [], [], []
-        print("balanced mode -- per prefix:")
-        for p in sorted(by_prefix):
-            band = by_prefix[p][:N + H]
-            if len(band) < N + H:
-                print(f"  [WARN] {p}: only {len(band)} audit-clean case(s), "
-                      f"wanted {N + H} -- this prefix is short")
-            shuffled = list(band)
-            rng.shuffle(shuffled)
-            h, t = shuffled[:H], shuffled[H:]
-            # narrow is the best K of THIS prefix's training allocation
-            t_by_score = sorted(t, key=lambda c: (-scored[c], c))
-            held.extend(h)
-            train_wide.extend(t)
-            train_narrow.extend(t_by_score[:K])
-            floor = min((scored[c] for c in band), default=float("nan"))
-            print(f"  {p}: band {len(band):>3} (score floor {floor:.2f})  ->  "
-                  f"held-out {len(h)}, wide {len(t)}, narrow {min(K, len(t))}")
-        print()
-        held, train_wide, train_narrow = sorted(held), sorted(train_wide), sorted(train_narrow)
-        held_set = set(held)
-    else:
-        # Held-out first, and stratified, so the gate reads validate's shape.
-        # Taken from WIDE: a case held out of the wide set is held out of narrow
-        # too (narrow is a subset), which is what "never train on it" requires.
-        held = stratify(wide_all, H, rng)[:H * 4]
-        held_set = set(held)
-
-        train_wide = [c for c in wide_all if c not in held_set]
-        train_narrow = [c for c in narrow_all if c not in held_set]
-
-        if args.stratify:
-            train_wide = stratify(train_wide, None, rng)
-            train_narrow = stratify(train_narrow, None, rng)
-
-    mode = ("balanced top-%d/prefix" % args.per_prefix_top if args.per_prefix_top
-            else "stratified" if args.stratify else "unstratified")
-    print(f"SELECTED ({mode}):")
-    print(fmt(train_narrow, "narrow (arm 1)"))
-    print(fmt(train_wide, "wide (arms 2,3)"))
-    print(fmt(held, "held-out (the gate)"))
-    print()
-
-    # The three invariants worth crashing over. Held-out leaking into a
-    # training pool is the one that would invalidate the stage-C gate without
-    # changing any number that looks wrong.
-    overlap = set(train_wide) & held_set
-    assert not overlap, f"held-out leaked into wide: {sorted(overlap)[:5]}"
-    assert not (set(train_narrow) & held_set), "held-out leaked into narrow"
-    assert set(train_narrow) <= set(train_wide), "narrow is not a subset of wide"
-    assert not ((set(train_wide) | held_set) & forbidden), "validate case in a pool"
-
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    written = {}
-    for name, cases in (("narrow", train_narrow), ("wide", train_wide),
-                        ("heldout", held)):
-        p = args.out_dir / f"{name}.txt"
-        p.write_text("\n".join(cases) + "\n", encoding="utf-8")
-        written[name] = {"n": len(cases), "composition": composition(cases),
-                         "cases": cases}
-        print(f"[INFO] {p} ({len(cases)} cases)")
-
-    meta = args.out_dir / "pool.json"
-    meta.write_text(json.dumps({
-        "ranking": str(args.ranking), "seed": args.seed,
-        "stratified": args.stratify,
-        "narrow_min": NARROW_MIN, "wide_min": WIDE_MIN,
+        "seed": args.seed,
+        "heldout_per": args.heldout_per,
         "audit_error_cases": sorted(bad),
         "sets": written,
     }, indent=2) + "\n", encoding="utf-8")

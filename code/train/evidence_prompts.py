@@ -21,16 +21,14 @@ WHY THEY ARE A FILE OF THEIR OWN
 ────────────────────────────────
 Two copies of a prompt drift, and the drift is invisible: both render, both
 parse, and the two runs stop being the same experiment without anything
-failing. So there is one copy, and three modules import it --
-build_fewshot_exemplars.py (the handful of exemplars, with a human reading every
-one), draft_evidence.py and check_evidence_perceivable.py (the same job at pool
-scale, ~1,850 tooth calls, where nobody reads anything by hand).
+failing. So there is one copy, and the two modules of the evidence pass import
+it: draft_evidence.py writes the prose over the pool's ~1,850 tooth calls, and
+check_evidence_perceivable.py screens it.
 
-Extracted from build_fewshot_exemplars.py on 2026-08-20. Until then the SFT path
-imported these three names from a module about the few-shot probe arm -- an arm
-that was superseded by LoRA SFT and is not part of a release, which meant the
-release shipped a 40 KB exemplar builder, and a directory named for it, to
-deliver three strings.
+These three strings sat inside an abandoned arm's exemplar builder until
+2026-08-20, which is why the SFT path used to import from it. They were never
+that arm's -- the teacher/student split above is the SFT evidence pass's own
+design -- and nothing here depends on that arm any more.
 """
 
 from __future__ import annotations

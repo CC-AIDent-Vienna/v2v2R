@@ -415,7 +415,7 @@ export NO_FACTS STATUS_DIR
     # which no seed reproduces. Passed as a FILE and not as a variable on
     # purpose -- `--export=ALL,CASE_IDS=A004,A019` is read by Slurm as
     # `CASE_IDS=A004`, because --export is itself comma-separated, and that
-    # silently ran the few-shot probe over one case (plan R12). A file has no
+    # silently ran a whole-pool job over one case. A file has no
     # such edge, and the count is printed below either way.
     if [ -n "${CASE_LIST:-}" ]; then
         if [ ! -f "$CASE_LIST" ]; then

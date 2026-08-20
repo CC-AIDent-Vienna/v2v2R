@@ -365,9 +365,9 @@ ARCH_FINDING_VALUES = ("absent", "normal", "caries", "filling", "post_and_core",
 # the code). It has to differ in one, or the measurement says nothing about
 # which change moved the number.
 #
-# It is also what keeps v6.9 artefacts readable: the fewshot_probe arms, the
-# 582 extracted GT files and every stored prediction were written as "normal",
-# and they are still scored by this file.
+# It is also what keeps v6.9 artefacts readable: the 582 extracted GT files
+# and every stored prediction of that era were written as "normal", and they
+# are still scored by this file.
 # v7.1 adds two more prompt-side words to fold. "restoration" -> "filling"
 # keeps crowned teeth behaving exactly as they did, because the crown skip
 # rule in build_restoration_summary is what decides those, not this token;

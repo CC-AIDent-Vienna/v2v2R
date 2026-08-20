@@ -197,11 +197,12 @@ QWEN_MODEL_NAME=Qwen3.5-9B-AWQ-arm6 RUN_NAME=arm6 \
 
 Step 0 is not optional — `train_vision_lora.py` treats a missing `heldout.txt`
 as a failure rather than a skip, because a check that disappears when its input
-moves is worse than no check. It has a second mode, `--ranking`, that selects a
-pool by ground-truth quality using `survey_gt_quality.py` and
-`audit_report_facts.py`; arm 6 uses neither, and the held-out 24 it draws are
-not arm 6's own 24 — same 6/6/6/6 shape, different names, and the gate is not
-what the 0.4658 is measured on.
+moves is worse than no check. The pool is the whole training split; only the
+held-out gate is selected, six cases per sub-dataset so it carries validate's
+own 25/25/25/25 shape rather than training's 69% P. `--audit-json` will drop
+cases `audit_report_facts.py` flags as label errors, and arm 6 passed none. The
+24 it draws are not arm 6's own 24 — same shape, different names, and the gate
+is the eval-loss curve, not what the 0.4658 is measured on.
 
 `check_prompt_parity.py` is the acceptance test that matters: it asserts the
 training path and the serving path produce **token-id-identical** prompts.

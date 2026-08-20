@@ -185,18 +185,18 @@ def call_vllm_messages(client, model: str, messages: list,
     FULL messages list.
 
     Split out of call_vllm() so a caller can express turn structures the
-    two-turn [system, user] shape cannot -- specifically the few-shot layout
-    [system, ex_user, ex_assistant, ..., query_user] that
-    code/arms/fewshot_probe.py sends. The pipeline itself still goes through
-    call_vllm() below and is unaffected: same retry, same structured
-    decoding, same reasoning_content fallback, same Optional[str] return.
+    two-turn [system, user] shape cannot -- a multi-turn layout
+    [system, ex_user, ex_assistant, ..., query_user], for instance. The
+    pipeline itself still goes through call_vllm() below and is unaffected:
+    same retry, same structured decoding, same reasoning_content fallback,
+    same Optional[str] return.
 
     json_schema (from qa_pairs.jsonl, built by build_vqa_pairs.py) CONSTRAINS
     the sampler to the declared shape. Without it the schema is prompt-only,
     and the model sometimes answers an object-typed field with a string
     describing the object ("object {eruption_state: 'fully_erupted'}") --
     valid JSON, wrong shape, which then breaks postprocessing downstream. It
-    constrains only the generated turn, so few-shot answers already in the
+    constrains only the generated turn, so any answers already present in the
     prompt are untouched.
 
     IT IS SENT AS `response_format`, NOT `guided_json`, AND THAT IS A FIX.
@@ -312,12 +312,14 @@ def parse_json(text: Optional[str]) -> dict:
     that starts with "," raises IncompleteObject rather than returning the
     short object (see below). Other trailing text after a complete
     object is discarded rather than fed to the parser. And it closes an
-    object the model finished but did not terminate. Few-shot
-    prompting made this common: every exemplar's assistant turn ends with "}",
-    and after the last fact's own "}" the model reads the pattern as finished
-    and stops one character short. Measured on job 552631 -- 4 of 16 few-shot
-    calls, 0 of 16 zero-shot, and all four held every field the call asked for
-    and parsed on appending a single "}".
+    object the model finished but did not terminate. Putting example
+    answers in the prompt made this common: every example's assistant turn ends
+    with "}", and after the last fact's own "}" the model reads the pattern as
+    finished and stops one character short. Measured on job 552631, on a
+    prompting arm that has since been dropped -- 4 of 16 calls with examples, 0
+    of 16 without, and all four held every field the call asked for and parsed
+    on appending a single "}". The repair outlived the arm because the failure
+    is the model's, not the arm's.
 
     The repair is narrow and self-validating: only the closers the bracket
     stack is actually missing are appended, nothing is added inside a string
@@ -794,10 +796,9 @@ def build_user_blocks(images: Dict[str, str], captions: Dict[str, str],
     call's images exist on disk (nothing to send).
 
     Split out of infer_call so anything that needs a turn in the pipeline's
-    exact shape -- notably code/arms/sinus_fewshot_probe.py, which wraps several of
-    them into a few-shot conversation -- gets it from here instead of
-    re-deriving the template's format keys and drifting the moment the template
-    changes. build_call_prompt() below is the call-entry-shaped face of it.
+    exact shape gets it from here instead of re-deriving the template's format
+    keys and drifting the moment the template changes. build_call_prompt()
+    below is the call-entry-shaped face of it.
 
     "guidance" (schema v6.1's shared _definitions vocabulary) is defaulted
     rather than required: a qa_pairs.jsonl built before that field existed
@@ -837,12 +838,12 @@ def build_call_prompt(call_data: dict, user_template: str,
     Render one qa_pairs.jsonl call entry into (user_blocks, json_schema).
 
     The call-entry-shaped face of build_user_blocks(): anything that needs the
-    EXACT prompt the pipeline would send can get it without re-deriving it.
-    code/arms/fewshot_probe.py replays these blocks as both its query turn and its
-    exemplar turns, and --dump-prompt diffs them against a stored model_input
-    dump. Re-deriving the prompt from schema.json instead would let the two
-    drift apart on the next schema edit, which is precisely what the few-shot
-    comparison must not do.
+    EXACT prompt the pipeline would send can get it without re-deriving it --
+    check_prompt_parity.py's token-id comparison of the training and serving
+    paths is the one that matters, and --dump-prompt diffs these blocks against
+    a stored model_input dump. Re-deriving the prompt from schema.json instead
+    would let the two drift apart on the next schema edit, which is precisely
+    what a parity check must not do.
 
     Returns (None, None) if none of the call's images exist on disk.
     """
@@ -1053,8 +1054,9 @@ class _ThreadRoutedStderr:
     parse_json's repair warnings, the retry lines -- is written by whichever
     thread happens to be running. Left alone they interleave line by line and
     stop being attributable to a call, and those logs are exactly what the
-    project reads its parse-failure and repair rates out of (the few-shot arm
-    asymmetry, 31 unterminated objects against 1, was counted from them).
+    project reads its parse-failure and repair rates out of (the 31-against-1
+    unterminated-object asymmetry between two prompting arms was counted from
+    them).
 
     Routing instead of locking each print keeps a call's whole diagnostic
     block together, and needs no signature change in parse_json or anything
@@ -1097,9 +1099,9 @@ _EMIT_LOCK = threading.Lock()
 def _install_stderr_router() -> _ThreadRoutedStderr:
     """Install the router on first use, not at import.
 
-    code/arms/fewshot_probe.py imports this module for build_call_prompt() and
-    parse_json(); replacing sys.stderr as an import side effect would change
-    its logging too, for no reason. Only the batched path needs it.
+    Other tools import this module for build_call_prompt() and parse_json();
+    replacing sys.stderr as an import side effect would change their logging
+    too, for no reason. Only the batched path needs it.
     """
     global _STDERR_ROUTER
     if _STDERR_ROUTER is None:
