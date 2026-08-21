@@ -427,7 +427,7 @@ def merge(args) -> int:
           "reference half\n  of that diff has no harness. Running the merged "
           "half alone proves only that the\n  checkpoint serves:\n\n"
           f"    QWEN_MODEL_NAME={out.name} RUN_NAME=vsft_verify \\\n"
-          f"      sbatch code/pipeline/infer/pool_infer.sh\n\n"
+          f"      sbatch scripts/pool_infer.sh\n\n"
           "  A real check needs --enable-lora on vLLM 0.19.0 against "
           "Qwen3.5-VL (unverified\n  as supported), a stated pass/fail "
           "criterion, and TEMPERATURE=0 RETRY_TEMPERATURE=0\n  with a pinned "

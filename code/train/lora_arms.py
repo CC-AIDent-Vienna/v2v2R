@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The LoRA arm table, and the assertion that a config actually hit its targets.
 
-Single source of truth for `docs/vision_sft_plan_stale.md` §2. `train_vision_lora.py`
+Single source of truth for `docs/vision_sft_plan_stale.md` §2. `trainer.py`
 imports ARMS from here and calls assert_arm() before it touches a GPU, so the
 declared parameter count is checked in exactly one place.
 
@@ -161,7 +161,7 @@ def count_trainable(model) -> int:
 def assert_arm(model, arm: str, r: int | None = None) -> int:
     """Raise unless the applied adapter has exactly the declared parameters.
 
-    Called by train_vision_lora.py after get_peft_model() and before the
+    Called by trainer.py after get_peft_model() and before the
     first forward pass. A mismatch here is never a rounding difference -- it
     means the regex hit a different set of modules than the plan costed, so
     the arm is not the arm.

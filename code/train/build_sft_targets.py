@@ -10,7 +10,7 @@ WHAT THIS FILE DOES NOT DO
 ──────────────────────────
 It does not tokenize, and it does not store the rendered prompt. A row carries
 the qa_pairs.jsonl call entry verbatim (`images`, `captions`, `questions`) and
-train_vision_lora.py's collator renders it at load time through the SAME
+trainer.py's collator renders it at load time through the SAME
 imported function this file validates it with. Two reasons, and the second is
 the important one:
 

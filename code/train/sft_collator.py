@@ -6,7 +6,7 @@ docs/vision_sft_plan_stale.md open item 9. Everything §3 produces is a FIELD-le
 decision; this is what turns it into `-100` spans and a weight vector, which is
 the only place those decisions become gradient.
 
-Split out of train_vision_lora.py so it can be audited with no GPU and no model
+Split out of trainer.py so it can be audited with no GPU and no model
 load: `python code/train/sft_collator.py --rows ... --show` prints, per row, exactly
 which tokens carry loss and at what weight. A mask that swallows a field should
 be visible before an 8-hour job, not inferred from a loss curve.

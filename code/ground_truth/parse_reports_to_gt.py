@@ -86,7 +86,7 @@ Stage 2 is pure CPU, so tuning it does not need a vLLM server:
         --out-dir dataset/training/outputs/ground_truth
 
 re-derives every {case}_gt.json from the report_facts already on disk.
-Same relationship code/pipeline/postprocess/postprocess_now.sh has to the VQA pipeline.
+Same relationship scripts/postprocess_now.sh has to the VQA pipeline.
 
 Usage:
     python code/ground_truth/parse_reports_to_gt.py \\

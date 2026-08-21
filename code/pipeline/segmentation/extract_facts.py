@@ -23,7 +23,7 @@ from scipy import ndimage
 # SimpleITK preferred, nibabel accepted -- and the fallback is not a nicety.
 # This is the ONLY module in the codebase that imports SimpleITK; every other
 # generator reads masks with nibabel, so a container built for the pipeline is
-# not guaranteed to carry it, and competition_runner.py now calls this script
+# not guaranteed to carry it, and infer.py now calls this script
 # on the critical path of a 15-minute budget. A missing import there is a
 # failed submission, not a slow one.
 #

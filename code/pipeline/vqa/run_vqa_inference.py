@@ -34,24 +34,24 @@ OpenAI-compatible chat completions API, writes one {case_id}_pred.json
 per case.
 
 Usage:
-  python code/pipeline/infer/run_vqa_inference.py \
+  python code/pipeline/vqa/run_vqa_inference.py \
       --vqa-jsonl test_5/outputs/qa_pairs.jsonl \
       --out-dir test_5/outputs/predictions \
       --vllm-url http://localhost:8000/v1 \
       --model qwen3.5-vl
 
   # Options:
-  LIMIT=2 python code/pipeline/infer/run_vqa_inference.py ...     (smoke test)
-  python code/pipeline/infer/run_vqa_inference.py ... --dry-run   (no vLLM calls)
-  python code/pipeline/infer/run_vqa_inference.py ... --resume    (skip inference for cases with an
+  LIMIT=2 python code/pipeline/vqa/run_vqa_inference.py ...     (smoke test)
+  python code/pipeline/vqa/run_vqa_inference.py ... --dry-run   (no vLLM calls)
+  python code/pipeline/vqa/run_vqa_inference.py ... --resume    (skip inference for cases with an
                                                     existing _pred.json; still writes a
                                                     missing summary/report from it)
-  python code/pipeline/infer/run_vqa_inference.py ... --case-ids A004 A059
-  python code/pipeline/infer/run_vqa_inference.py ... --max-concurrency 16
+  python code/pipeline/vqa/run_vqa_inference.py ... --case-ids A004 A059
+  python code/pipeline/vqa/run_vqa_inference.py ... --max-concurrency 16
                                                    (calls in flight per case; 1 =
                                                     the old sequential behaviour.
                                                     Env: MAX_CONCURRENCY)
-  python code/pipeline/infer/run_vqa_inference.py ... --summaries-out-dir <dir>
+  python code/pipeline/vqa/run_vqa_inference.py ... --summaries-out-dir <dir>
                                                    (also persist the postprocessed
                                                     {case_id}_summary.json fed to the
                                                     report LLM -- same output as
@@ -157,7 +157,7 @@ STRUCTURED_OUTPUTS = os.environ.get("STRUCTURED_OUTPUTS", "1").lower() \
 # the aksssr_v7_validate baseline -- was produced at the server default, and an
 # arm scored at 0 against a baseline scored at the default swaps one confound
 # for another. Adopting 0 means re-running the baseline at 0 too; the payload
-# replay in code/pipeline/aksssr_pipeline.sh makes that ~17 min rather than a re-render.
+# replay in scripts/aksssr_pipeline.sh makes that ~17 min rather than a re-render.
 TEMPERATURE = os.environ.get("TEMPERATURE", "").strip()
 
 # A truncated object is RESENT (see infer_call), and at temperature 0 a resend
@@ -1543,5 +1543,5 @@ if __name__ == "__main__":
             print(f"[WARN]   {case_id}: {err}", file=sys.stderr)
         print("[WARN] Rebuild the summaries and reports from the predictions with:",
               file=sys.stderr)
-        print("[WARN]   code/pipeline/postprocess/postprocess_now.sh <run_dir>",
+        print("[WARN]   scripts/postprocess_now.sh <run_dir>",
               file=sys.stderr)

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-train_vision_lora.py -- the arms of docs/vision_sft_plan_stale.md §2, trained.
+trainer.py -- the arms of docs/vision_sft_plan_stale.md §2, trained.
 
-    python code/train/train_vision_lora.py --arm vision+merger --rows sft_wide.jsonl \\
+    python code/train/trainer.py --arm vision+merger --rows sft_wide.jsonl \\
         --out outputs/vsft_arm2 --epochs 2
 
 Four things this file is responsible for, and three of them are refusals:
@@ -69,40 +69,9 @@ ROOT = REPO_ROOT
 import lora_arms                          # noqa: E402
 import sft_collator as SC                 # noqa: E402
 import sft_prompt as SP                   # noqa: E402
-
-
-class RowDataset:
-    """Rows, encoded lazily so dataloader workers do the image preprocessing.
-
-    Encoding is ~0.4 s of CPU per row (resize to 1344^2, patchify), which over
-    3,500 rows x 2 epochs is ~45 min. In the main process that is 45 min the
-    GPU spends idle; in workers it overlaps the step it belongs to.
-
-    A row that cannot be encoded is dropped ON FIRST TOUCH and counted, and the
-    epoch is short by one rather than failing -- but the count is printed at the
-    end, because a silent coverage difference between arms is exactly what the
-    plan's conventions forbid ("a lost call is a difference in coverage between
-    the arms, not a finding about them").
-    """
-
-    def __init__(self, rows: list[dict], collator: SC.ToothCallCollator):
-        self.rows = rows
-        self.collator = collator
-        self.dropped: collections.Counter = collections.Counter()
-
-    def __len__(self) -> int:
-        return len(self.rows)
-
-    def __getitem__(self, i: int):
-        try:
-            return self.collator.encode(self.rows[i])
-        except (SC.TooLong, SP.NoImage, ValueError) as e:
-            self.dropped[type(e).__name__] += 1
-            print(f"[DROP] {type(e).__name__}: {e}", file=sys.stderr)
-            # Fall forward to the next usable row rather than returning None:
-            # a None would have to be handled in the collator, and a batch of
-            # one cannot be made empty.
-            return self[(i + 1) % len(self.rows)]
+# RowDataset and load_rows live in dataset.py: which rows exist, and when
+# they are encoded, is a separate question from how a step is taken.
+from dataset import RowDataset, load_rows  # noqa: E402,F401
 
 
 def loss_on_batch(model, inputs: dict):
@@ -170,25 +139,6 @@ def build_trainer_class():
 
     return LoRATrainer
 
-
-def load_rows(path: Path, case_list: Path | None, limit: int | None,
-              seed: int) -> list[dict]:
-    import random
-
-    rows = [json.loads(l) for l in
-            path.read_text(encoding="utf-8").splitlines() if l.strip()]
-    if case_list:
-        keep = {l.strip() for l in case_list.read_text().splitlines()
-                if l.strip() and not l.startswith("#")}
-        rows = [r for r in rows if r["case_id"] in keep]
-        print(f"[INFO] {case_list.name}: {len(keep)} case(s) -> {len(rows)} row(s)")
-    if limit:
-        # Seeded and case-shuffled: taking the first N rows of the file takes
-        # the first few CASES, and a 200-row sanity check that saw 10 cases is
-        # not a sanity check on the pool.
-        random.Random(seed).shuffle(rows)
-        rows = rows[:limit]
-    return rows
 
 
 def quantized_modules_in_checkpoint(model_dir: Path) -> int:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# code/pipeline/preprocess/gen_images_cpu.sh -- steps 1-4 of the main pipeline, on the CPU partition
+# scripts/gen_images_cpu.sh -- steps 1-4 of the main pipeline, on the CPU partition
 #
 # Why this exists
 # ---------------
@@ -19,9 +19,9 @@
 # would have produced itself. It also writes qa_pairs.jsonl (step 5), so what
 # follows on the GPU is inference and nothing else:
 #
-#   sbatch code/pipeline/preprocess/gen_images_cpu.sh validate   # now, on the short cpu queue
+#   sbatch scripts/gen_images_cpu.sh validate   # now, on the short cpu queue
 #   QA_JSONL=$PWD/outputs/<run>_validate/qa_pairs.jsonl \
-#       sbatch code/pipeline/infer/pool_infer.sh                 # later; the GPU step alone
+#       sbatch scripts/pool_infer.sh                 # later; the GPU step alone
 #
 # A batch driver that renders as well can be queued at the same time -- it
 # re-checks each completion signal per case, so whatever this job has finished
@@ -85,12 +85,12 @@
 # runs, so a broken env exits in two seconds instead of failing 582 times.
 #
 # Usage:
-#   sbatch code/pipeline/preprocess/gen_images_cpu.sh validate
-#   sbatch code/pipeline/preprocess/gen_images_cpu.sh training
-#   LIMIT=5 sbatch code/pipeline/preprocess/gen_images_cpu.sh validate            # same 5 cases as the pipeline
-#   WORKERS=8 sbatch code/pipeline/preprocess/gen_images_cpu.sh training          # see PARALLELISM first
-#   RUN_NAME=aksssr_v7 sbatch code/pipeline/preprocess/gen_images_cpu.sh validate # different output dir
-#   NO_FACTS=1 sbatch code/pipeline/preprocess/gen_images_cpu.sh validate         # must match the pipeline run
+#   sbatch scripts/gen_images_cpu.sh validate
+#   sbatch scripts/gen_images_cpu.sh training
+#   LIMIT=5 sbatch scripts/gen_images_cpu.sh validate            # same 5 cases as the pipeline
+#   WORKERS=8 sbatch scripts/gen_images_cpu.sh training          # see PARALLELISM first
+#   RUN_NAME=aksssr_v7 sbatch scripts/gen_images_cpu.sh validate # different output dir
+#   NO_FACTS=1 sbatch scripts/gen_images_cpu.sh validate         # must match the pipeline run
 # =============================================================================
 
 #SBATCH --job-name=gen_images_cpu
@@ -104,7 +104,7 @@
 
 set -euo pipefail
 
-SPLIT="${1:?Usage: sbatch code/pipeline/preprocess/gen_images_cpu.sh <training|validate>}"
+SPLIT="${1:?Usage: sbatch scripts/gen_images_cpu.sh <training|validate>}"
 if [ "$SPLIT" != "training" ] && [ "$SPLIT" != "validate" ]; then
     echo "[FAIL] SPLIT must be 'training' or 'validate', got: $SPLIT"
     exit 1
@@ -540,6 +540,6 @@ export NO_FACTS STATUS_DIR
     echo "  QWEN_MODEL_NAME=<served-model-name> RUN_NAME=${RUN_NAME}_${SPLIT} \\"
     echo "    QA_JSONL=$OUT_DIR/qa_pairs.jsonl \\"
     echo "    GT_DIR=\$PWD/dataset/$SPLIT/outputs/ground_truth \\"
-    echo "    sbatch code/pipeline/infer/pool_infer.sh"
+    echo "    sbatch scripts/pool_infer.sh"
 
 } 2>&1

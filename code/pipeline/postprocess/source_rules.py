@@ -2,7 +2,7 @@
 """
 code/pipeline/postprocess/source_rules.py
 
-The ten source rules of docs/postprocess_pipeline.md, applied to a finished summary.
+The ten source rules of docs/postprocess.md, applied to a finished summary.
 
 WHY A POST-PASS AND NOT SURGERY IN postprocess_pred.py
 ──────────────────────────────────────────────────────
@@ -19,7 +19,8 @@ wanted:
 
   * With no facts file the module is a no-op and postprocess behaves as before.
   * Every rule is one function, named for its section in the document, and can
-    be turned off on its own.
+    be turned off on its own -- from a config file, without touching this file:
+    see RULES below and configs/postprocess/README.md.
   * What each rule changed is recorded in `source_rules` inside the summary,
     so a rewrite is never silent -- the same contract audit_facts.py keeps.
 
@@ -36,7 +37,7 @@ reaches the report either way.
 
 THE MEASUREMENTS ARE IN THE DOCUMENT, NOT HERE
 ──────────────────────────────────────────────
-Every rule below is one paragraph in docs/postprocess_pipeline.md with the table
+Every rule below is one paragraph in docs/postprocess.md with the table
 that chose it. This module states what it does and points there; it does not
 restate the evidence, which would then have two homes and drift.
 
@@ -64,10 +65,20 @@ UNERUPTED = ("complete_bony_inclusion", "partially_erupted")
 # The composite's canal fact is asked here only, so these are the teeth whose
 # `location` votes on a side -- see THE RULE -- canal location.
 CANAL_TEETH = {"left": (36, 37, 38), "right": (46, 47, 48)}
+
+# The prior for a canal side no read settled. synthesize_report.py carries the
+# same name and both are bound to `priors.canal_location` in
+# rules_config.BINDINGS, so the config file is the one place it is stated and
+# the two cannot drift apart. The value here is the default.
 DEFAULT_CANAL_LOCATION = "lingual"
 
-# Per-rule switches, on by default. Named for their sections in
-# docs/postprocess_pipeline.md so a survey diff can be traced back to a paragraph.
+# ── THE SWITCHES ARE THE ARM ────────────────────────────────────────────────
+# One per rule, named for its section in docs/postprocess.md so a survey diff
+# traces back to a paragraph. THESE ARE DEFAULTS, NOT DECISIONS: each is bound
+# to `source_rules.<name>` in rules_config.BINDINGS, and a
+# configs/postprocess/*.yaml passed as --config rewrites this dict in place
+# before any case is read. Edit the config for an experiment; edit here only
+# when adding a rule, and add its binding in the same commit.
 RULES = {
     "absent_teeth": True,
     "impaction": True,
@@ -147,7 +158,7 @@ def absent_list(facts: Dict) -> Set[int]:
         artefact: gating that too costs F1 0.858 -> 0.850 (0.870 -> 0.828 on
         validate) and would delete A018's "Completely edentulous maxilla".
 
-    See docs/postprocess_pipeline.md, THE RULE -- absent teeth, and regenerate with
+    See docs/postprocess.md, THE RULE -- absent teeth, and regenerate with
     code/studies/absent_fov_gate_evidence.py.
     """
     structured = _d(facts.get("structured"))

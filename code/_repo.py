@@ -29,14 +29,16 @@ REPO_ROOT = CODE_ROOT.parent
 GROUPS = (
     "pipeline/segmentation",
     "pipeline/preprocess",
-    "pipeline/infer",
+    "pipeline/vqa",
     "pipeline/postprocess",
     "ground_truth",
+    # The audit half: checks, second opinions and the human triage loop.
+    # Separate so that nothing on the label-PRODUCING path needs a human.
+    "ground_truth/audit_gt",
     "eval",
     "train",
     "arms",
     "studies",
-    "competition",
     "data",
 )
 

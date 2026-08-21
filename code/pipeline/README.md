@@ -1,7 +1,25 @@
-# ToothFairy4 competition container — pipeline
+# `code/pipeline/` — the inference path
 
-One CBCT volume in, one radiology report out. Grand Challenge starts a **fresh
-container for every case** and gives it **15 minutes**.
+One CBCT volume in, one radiology report out.
+
+`infer.py` is the entry point and `scripts/run_infer.sh` submits it; the four
+subdirectories below are the stages it drives, in order:
+
+| | |
+|---|---|
+| `segmentation/` | the mask + facts handover (and `audit_facts.py`, which is on its way upstream — see [The facts audit](#the-facts-audit-todo-it-moves-upstream)) |
+| `preprocess/` | volume + mask → rendered images → `qa_pairs.jsonl` |
+| `vqa/` | the VLM calls — the only stage that needs a GPU |
+| `postprocess/` | predictions → summaries → report — the rules it applies are [`configs/postprocess/`](../../configs/postprocess/), not constants in the code |
+
+**On the 15-minute budget below.** This document was written for the ToothFairy4
+Grand Challenge submission, which started a **fresh container for every case**
+and gave it **15 minutes** for all of the above. That submission is finished and
+nothing enforces the deadline now, but the schedule it forced — starting vLLM
+first and rendering while it loads, polling `/health` rather than sleeping,
+sizing concurrency off the KV cache the server reports — is kept, because every
+one of those is worth having whether or not a clock is running. Read the
+timings as the reason the pipeline is shaped this way, not as a live constraint.
 
 ## Who does what
 
@@ -9,18 +27,18 @@ container for every case** and gives it **15 minutes**.
 |---|---|---|
 | **A. Segmentation** | *(segmentation)* | `mask.nii.gz` — per-tooth FDI labels + jaw structures |
 | **B. Facts** | *(segmentation)* | `facts.json` — which FDI numbers are present/absent |
-| **B′. Facts audit** | *(VQA)* | an audited **copy** of `facts.json`, corrected against the mask |
+| **B′. Facts audit** | *(segmentation — **TODO**)* | `facts.json` already corrected against the mask |
 | **C. Report** | *(VQA)* | rendered images → VLM reads → `report.txt` |
 
-**vLLM belongs entirely to C.** B is the handover point: everything downstream
-needs to know which teeth actually exist.
+**vLLM belongs entirely to C.** B/B′ is the handover point: everything
+downstream needs to know which teeth actually exist, and whether they were in
+the volume at all.
 
-B′ is ours, not theirs. Both the mask and the facts arrive from the
-segmentation component, so both exist on Grand Challenge and passing them is
-the real input shape. But `facts.json` is extracted from a radiology *report*,
-and a report describes the patient while the mask describes the acquisition —
-so we audit what we are handed before any generator opens it. See
-[The facts audit](#the-facts-audit).
+**Our input is the CBCT volume, the mask, and *audited* facts.** The two halves
+are being merged into one codebase, and the audit goes with the component that
+owns the facts — so this side does not call it. It is spelled out below anyway,
+because it is a requirement on what we are handed, not an implementation detail
+we can drop: see [The facts audit](#the-facts-audit-todo-it-moves-upstream).
 
 ## The pipeline
 
@@ -31,7 +49,7 @@ so we audit what we are handed before any generator opens it. See
      └─────────────────────────────────────────────────────────────┘
      ┌─────────────────────────────────────────────────────────────┐
      │ 1b. segmentation  ->  mask.nii.gz + facts.json (CPU/GPU)    │
-     │ 1b'. AUDIT facts against the mask  ->  audited copy  (~2 s) │
+     │ 1b'. facts AUDITED against the mask (~2 s)   [upstream/TODO]│
      │ 1c. render images from volume + mask + AUDITED facts  (CPU) │
      │       panoramic | 3D views | sinus  (parallel)              │
      │       then 32 tooth close-ups (needs panoramic + 3D)        │
@@ -48,10 +66,24 @@ so we audit what we are handed before any generator opens it. See
 segmentation and rendering need CPU and (mostly) no GPU. Run them at the same
 time and one hides inside the other. Run them in sequence and you pay for both.
 
-## The facts audit
+## The facts audit — TODO: it moves upstream
 
-`code/pipeline/segmentation/audit_facts.py`, run by `competition_runner.py` as the phase
-`facts:audit`, before any generator opens the facts file.
+**Status.** The audit is `code/pipeline/segmentation/audit_facts.py`, and
+`infer.py` still runs it as the phase `facts:audit` (on a copy, before any
+generator opens the facts file) — that is what keeps the research runs here
+correct while the two halves are separate. **It is not where it belongs.** When
+the codebases are merged it goes to the component that produces the facts, and
+this side stops calling it:
+
+- **TODO (segmentation side):** run the two corrections below at fact-extraction
+  time, and emit `fov.maxilla` and `bridge_arches` in the facts file.
+- **TODO (this side, after that lands):** drop the `facts:audit` phase from
+  `infer.py`, and take the audited facts straight from `/input`.
+
+Until both land, nothing here changes. What does *not* change either way is the
+contract: **every generator downstream assumes the facts it opens have already
+been audited against the mask.** The rest of this section is the specification
+of what that means — read it as a requirement on the input, whoever runs it.
 
 ### Why it exists
 
@@ -94,19 +126,25 @@ about the **acquisition**, and only the mask can make them:
   and **12 of the 40 validate cases change** because of it.
 - the fixed-bridge rule reads `bridge_arches`, a key upstream never emits.
 
-### How it is wired, and why each choice
+### How it is wired today, and what survives the move
 
-- **It runs first.** Every generator reads the facts file — it decides which
-  teeth get outlined and what the captions say — so auditing after a render
-  would mean rendering twice.
-- **It is free.** ~2 s of CPU, entirely inside the ~200 s model-load shadow.
+- **It runs before anything reads the facts.** Every generator reads that file —
+  it decides which teeth get outlined and what the captions say — so auditing
+  after a render would mean rendering twice. Upstream this is automatic; here it
+  is why `facts:audit` is the first phase.
+- **It is free.** ~2 s of CPU, entirely inside the ~200 s model-load shadow —
+  which is also why moving it upstream costs this pipeline nothing.
 - **It works on a copy.** `audit_facts.py` rewrites in place, so the runner
-  copies first and never mutates the input it was handed.
+  copies first and never mutates the input it was handed. Keep that rule after
+  the merge: `/input` is read-only on Grand Challenge regardless.
 - **Failure is not fatal.** A failed audit logs `[WARN]` and the run continues
-  on unaudited facts — they still describe the case, just less precisely.
+  on unaudited facts — they still describe the case, just less precisely. Once
+  the audit is upstream, that fallback disappears with it: unaudited facts in,
+  wrong captions out, silently.
 - **Its stdout is printed, not captured.** This is the one stage that rewrites
   an input the rest of the run treats as given, and silence is exactly how
-  *"the FOV correction never fired"* stays invisible for a whole run.
+  *"the FOV correction never fired"* stays invisible for a whole run. Whoever
+  owns it next should keep saying what it changed, for the same reason.
 
 ## Timings we have measured
 
@@ -236,20 +274,21 @@ KV cache on a 24 GiB card. It will **not** work on a T4: the 4-bit kernels
 
 ## Interface between the halves
 
+What this side is handed — the CBCT volume, the mask, and **audited** facts:
+
 ```
 /input/                       given by Grand Challenge
   <case>.nii.gz               the CBCT volume
 
-  A/B produce:
+  A/B/B' produce:
     mask.nii.gz               FDI-labelled segmentation
-    facts.json                {"structured": {"teeth_present": [11,12,...],
-                                              "teeth_absent":  [16,25,...]}}
-
-  B' produces (ours, a copy -- the input is never mutated):
-    facts.audited.json        + fov.maxilla ("excluded" when the mask says so)
-                              + bridge_arches
-                              - maxillary FDIs, when neither bone nor teeth
-                                are in the volume
+    facts.json                already audited against the mask:
+                              {"structured": {"teeth_present": [11,12,...],
+                                              "teeth_absent":  [16,25,...],
+                                              "bridge_arches": [...]},
+                               "fov": {"maxilla": "excluded" | "partial" | ...}}
+                              - maxillary FDIs dropped, when neither bone nor
+                                teeth are in the volume
 
   C produces:
 /output/
@@ -258,10 +297,12 @@ KV cache on a 24 GiB card. It will **not** work on a T4: the 4-bit kernels
 
 `facts.json` needs `teeth_present` above all: the renderer draws and labels only
 those teeth, so a segmentation false positive never becomes a tooth in the
-report. Everything else in the file is optional **as input** — but two fields
-the generators depend on are not optional as *output*, and neither is supplied
-upstream: `fov.maxilla: "excluded"` and `bridge_arches`. Both are written by
-the audit, which is why it is not a validation pass that can be turned off.
+report. Everything else in the file is optional in the sense that a generator
+will not crash without it — but two fields the generators genuinely depend on
+are `fov.maxilla: "excluded"` and `bridge_arches`, and today `extract_facts`
+emits neither. They come from the audit, so the facts are only a usable input
+once the audit has run somewhere: upstream after the merge, and in the meantime
+in `infer.py`. Nothing about that makes it optional.
 
 ## Open questions
 
@@ -276,6 +317,7 @@ the audit, which is why it is not a validation pass that can be turned off.
    and the audit exists because the answer is "not tightly enough": the two
    corrections it makes are ones only the mask can support, and one of them
    changes 12 of 40 validate cases. Treat the facts as a claim to be checked,
-   not as a derived view of the segmentation.
+   not as a derived view of the segmentation — and, once the merge lands, as a
+   claim the segmentation side checks before handing it over.
 3. **Peak RAM of segmentation + rendering together.** The cap is 32 GiB for the
    whole container, and both halves load the volume.

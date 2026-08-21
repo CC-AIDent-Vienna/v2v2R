@@ -66,6 +66,10 @@ Usage:
 import json
 import re
 import argparse
+import concurrent.futures as cf
+import os
+import subprocess
+import sys
 from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -764,6 +768,158 @@ def build_questions_block(facts: List[Dict], fdi: Optional[int] = None,
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# RENDERING -- the half that makes this the preprocess driver
+#
+# build_vqa_pairs.py plans from the FILES ON DISK: whatever images and caption
+# sidecars exist under --images-dir. That means the payload is only as complete
+# as the render, and for most of this project's life the render was a separate
+# job you had to remember to run first -- one script per generator, plus a
+# fifth that looped over cases.
+#
+# Given --dataset-dir it now renders what is missing before it plans, so
+# "images -> qa_pairs" is one command and a partial render cannot silently
+# produce a partial payload. Without --dataset-dir the behaviour is exactly as
+# before: plan from disk, render nothing.
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Per-generator completion markers, in dependency order. Each generator writes
+#: its own, so a run interrupted after the 3D renders resumes at the sinuses
+#: rather than from the top.
+#:
+#: The composites key on {case}_coverage.json and NOT on {case}_tooth_captions
+#: .json, which is the obvious choice and is wrong: create_tooth_detail.py
+#: writes the caption sidecar only `if captions`, so an edentulous case
+#: finishes perfectly and leaves none. 4 of the 40 validate cases are like
+#: that, and keying on it re-renders each of them on every resumed run while
+#: reporting nothing amiss. coverage.json is written unconditionally.
+GENERATORS = [
+    ("panoramic",  "create_panoramic.py",    "{case}_panoramic_caption.json"),
+    ("3d",         "create_3d_renders.py",   "{case}_3d_captions.json"),
+    ("sinus",      "create_sinus_detail.py", "{case}_sinus_captions.json"),
+    ("composites", "create_tooth_detail.py", "{case}_coverage.json"),
+]
+
+
+def _repo_module(name: str) -> str:
+    """Absolute path of a sibling generator, via code/_repo.py."""
+    import sys as _s
+    from pathlib import Path as _P
+    _s.path.insert(0, str(next(p for p in _P(__file__).resolve().parents
+                               if (p / "_repo.py").is_file())))
+    from _repo import module_path
+    return str(module_path(name))
+
+
+def render_case(case: str, dataset_dir: Path, images_dir: Path,
+                no_facts: bool, force: bool, threads: int,
+                facts_dir: Optional[Path] = None) -> str:
+    """Render one case's four image sets. Returns a one-line status.
+
+    Serial within the case on purpose. The concurrency that matters for a whole
+    split is BETWEEN cases (--workers), and nesting the two oversubscribes the
+    allocation: three generators x N workers competing for the same cores is
+    slower than running serially, not faster.
+    """
+    volume = dataset_dir / "images" / f"{case}_0000.nii.gz"
+    mask = dataset_dir / "masks" / f"{case}.nii.gz"
+    # WHICH facts is a real choice, not a path detail. dataset/<split>/facts
+    # is what gen_images_cpu.sh and aksssr_pipeline.sh have always rendered
+    # from, and is the default here so this driver reproduces them. infer.py
+    # renders from an AUDITED copy instead -- audit_facts.py corrects facts
+    # the mask contradicts, and create_panoramic.py filters its outlines by
+    # facts.structured.teeth_present, so the two can differ in PIXELS and not
+    # merely in caption text. Pass --facts-dir to render from the audited
+    # copy; the default is deliberately the historical behaviour.
+    facts = (facts_dir or dataset_dir / "facts") / f"{case}.json"
+
+    # Preflight, so one absent file skips a case instead of killing a 582-case
+    # pool partway through.
+    if not volume.is_file():
+        return f"[SKIP] {case} -- no volume: {volume}"
+    if not mask.is_file():
+        return f"[SKIP] {case} -- no mask: {mask}"
+    if not no_facts and not facts.is_file():
+        return f"[SKIP] {case} -- no facts: {facts}"
+
+    # Per-worker thread caps. Without these every worker's BLAS grabs all the
+    # allocated cores and --workers 4 oversubscribes 4x.
+    env = dict(os.environ)
+    env.update(OMP_NUM_THREADS=str(threads), OPENBLAS_NUM_THREADS=str(threads),
+               MKL_NUM_THREADS=str(threads))
+
+    common = ["--case-id", case, "--out-dir", str(images_dir)]
+    fct = ["--no-facts"] if no_facts else ["--facts-file", str(facts)]
+    argv = {
+        "create_panoramic.py":    common + ["--volume", str(volume), "--mask", str(mask)] + fct,
+        "create_3d_renders.py":   common + ["--mask", str(mask)] + fct,
+        "create_sinus_detail.py": common + ["--volume", str(volume), "--mask", str(mask)],
+        "create_tooth_detail.py": common + ["--volume", str(volume), "--mask", str(mask)] + fct
+                                  + ["--pano-dir", str(images_dir),
+                                     "--render-dir", str(images_dir)],
+    }
+
+    did = []
+    for label, script, marker in GENERATORS:
+        if not force and (images_dir / marker.format(case=case)).exists():
+            did.append(f"{label}:skip")
+            continue
+        proc = subprocess.run([sys.executable, _repo_module(script)] + argv[script],
+                              capture_output=True, text=True, env=env)
+        if proc.returncode != 0:
+            return (f"[FAIL] {case} -- {script} exited {proc.returncode}\n"
+                    f"{proc.stderr[-1200:]}")
+        did.append(label)
+    return f"[PASS] {case} -- {' '.join(did)}"
+
+
+def render_missing(cases: List[str], dataset_dir: Path, images_dir: Path,
+                   no_facts: bool, force: bool, workers: int,
+                   facts_dir: Optional[Path] = None) -> int:
+    """Render every case that needs it. Returns the number that failed.
+
+    A ThreadPoolExecutor is enough: every generator is a subprocess, so the GIL
+    is not in the way and threads only have to wait on them.
+
+    DO NOT run two of these over the same --images-dir at once. The completion
+    marker is written at the END of each generator, so two workers that start
+    the same case both see "not done" and race on the same PNG paths. Within
+    one process that cannot happen -- the case list is partitioned -- but two
+    concurrent JOBS is the shape to avoid.
+    """
+    images_dir.mkdir(parents=True, exist_ok=True)
+    cpus = int(os.environ.get("SLURM_CPUS_PER_TASK") or os.cpu_count() or 8)
+    threads = max(1, cpus // max(1, workers))
+    todo = [c for c in cases
+            if force or not all((images_dir / m.format(case=c)).exists()
+                                for _, _, m in GENERATORS)]
+    print(f"[INFO] render: {len(todo)} of {len(cases)} case(s) need work, "
+          f"{workers} worker(s) x {threads} thread(s) of {cpus} cpu(s)")
+    if not todo:
+        return 0
+
+    failed = 0
+    with cf.ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(render_case, c, dataset_dir, images_dir,
+                               no_facts, force, threads, facts_dir): c
+                   for c in todo}
+        for fut in cf.as_completed(futures):
+            line = fut.result()
+            print(line, flush=True)
+            if line.startswith("[FAIL]"):
+                failed += 1
+    if failed:
+        print(f"[WARN] {failed} case(s) failed to render; they will be absent "
+              f"from the payload", file=sys.stderr)
+    return failed
+
+
+def cases_in(dataset_dir: Path) -> List[str]:
+    """Every case the dataset dir has a volume for."""
+    return sorted(p.name[:-len("_0000.nii.gz")]
+                  for p in (dataset_dir / "images").glob("*_0000.nii.gz"))
+
+
 def build_vqa_records(schema_path: str, images_dir: str, out_path: str,
                        project_dir: str,
                        cases: Optional[List[str]] = None,
@@ -989,9 +1145,44 @@ if __name__ == "__main__":
     ap.add_argument("--no-captions", action="store_true",
                      help="Don't read/attach the caption sidecar JSON files")
 
+    # ── rendering: given a dataset dir, make the images this then plans from ──
+    ap.add_argument("--dataset-dir", type=Path, default=None,
+                     help="dataset/<split>. Given this, any case missing images "
+                          "is RENDERED before the payload is planned, so a "
+                          "partial render cannot silently produce a partial "
+                          "payload. Omitted, nothing is rendered and this plans "
+                          "from whatever is already in --images-dir, exactly as "
+                          "before.")
+    ap.add_argument("--workers", type=int, default=1,
+                     help="cases rendered in parallel. Generators run SERIALLY "
+                          "within a case, so this is the only concurrency knob "
+                          "and threads-per-worker is derived from it. 1 case is "
+                          "fine at 1; a 582-case split is not.")
+    ap.add_argument("--force-render", action="store_true",
+                     help="re-render even where the completion markers exist")
+    ap.add_argument("--facts-dir", type=Path, default=None,
+                     help="where the facts files come from (default: "
+                          "<dataset-dir>/facts, which is what every batch "
+                          "render in this project has used). Point it at an "
+                          "AUDITED facts dir to reproduce infer.py, which "
+                          "renders from one -- the two can differ in pixels, "
+                          "not just captions.")
+    ap.add_argument("--no-facts", action="store_true",
+                     help="render with no facts file at all -- the NO_FACTS "
+                          "ablation. Changes the PIXELS, not just the captions: "
+                          "create_panoramic.py filters its outlines by "
+                          "facts.structured.teeth_present.")
+
     args = ap.parse_args()
 
     try:
+        if args.dataset_dir:
+            todo = args.cases or cases_in(args.dataset_dir)
+            if args.limit:
+                todo = todo[:args.limit]
+            render_missing(todo, args.dataset_dir, Path(args.images_dir),
+                            args.no_facts, args.force_render, args.workers,
+                            facts_dir=args.facts_dir)
         build_vqa_records(args.schema, args.images_dir, args.out, args.project_dir,
                            cases=args.cases, limit=args.limit,
                            include_captions=not args.no_captions)

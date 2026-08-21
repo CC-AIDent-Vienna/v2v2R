@@ -17,8 +17,8 @@ by an older postprocess and scores 0.4557 — see *Report level* below.
 > **What is named here but not shipped.** This document is written against the
 > research repo and cites its diagnostics by path. The public release ships the
 > report-producing path, the official metric and the fact-level survey; it does
-> not ship `code/eval/compare_sources.py`, `code/eval/evaluation.sh`,
-> `code/arms/postprocess_val_now.sh`, `code/competition/competition_sim.sh` or
+> not ship `code/eval/compare_sources.py`, `scripts/evaluation.sh`,
+> `scripts/postprocess_val_now.sh`, `scripts/competition_sim.sh` or
 > anything under `code/studies/`. Those names are provenance for a measurement,
 > not instructions — every rule below is stated with its number here.
 
@@ -26,7 +26,7 @@ by an older postprocess and scores 0.4557 — see *Report level* below.
 > not been run**, so every training-split section below is empty and says so.
 > The sections that once held those numbers were measured on a superseded arm
 > and have been removed rather than left to be mistaken for this one's.
-> `git log -- docs/postprocess_pipeline.md` has them.
+> `git log --follow -- docs/postprocess.md` has them.
 
 Fact-level
 numbers come from `structured_findings_evaluation.py` / `compare_sources.py` against the generated
@@ -51,8 +51,8 @@ reference reports.
 > load-bearing survived in place: the silencing rule and the ≥0.35 precision bar
 > it produced (*What reaches the report*). The facts-file provenance went with
 > it — it belongs to the facts pool, not to postprocessing;
-> `code/competition/competition_sim.sh`'s header is where that lives.
-> `git log -- docs/postprocess_pipeline.md` has the rest.
+> `scripts/competition_sim.sh`'s header is where that lives.
+> `git log --follow -- docs/postprocess.md` has the rest.
 
 ## 1. Per-source accuracy — which source knows what
 
@@ -77,7 +77,7 @@ python3 code/eval/compare_sources.py outputs/aksssr_v7_trained_arm6_validate --s
 **The `facts` column is `dataset/$SPLIT/facts/<case>.json`, and it is a function
 of the segmentation mask** — `extract_facts.py` over the mask reproduces the
 upstream file byte for byte, and no report was ever read to build it
-(`code/competition/competition_sim.sh`'s header has the provenance and the check). Two
+(`scripts/competition_sim.sh`'s header has the provenance and the check). Two
 consequences every rule rests on: scoring it against report-derived ground
 truth is not circular, and the competition container can compute it from a CBCT
 with no report in the room.
@@ -86,7 +86,7 @@ The facts file already had one consumer before any of this —
 `validate_summary_with_facts.py`, a drop-only gate that removes summary claims
 the mask contradicts and adds nothing. It is **not in the current path**;
 `postprocess_now.sh` runs `postprocess_pred.py --facts-dir` → `source_rules.py`,
-and the gate is reached only by the older `code/arms/postprocess_val_now.sh`. It is
+and the gate is reached only by the older `scripts/postprocess_val_now.sh`. It is
 named below because every rule here argues against its asymmetry.
 
 Measured on **arm 6**, against the generated ground truth, on **validate-40**.
@@ -987,7 +987,7 @@ list:
 |---|---|---|
 | `postprocess_pred.collect_arch_absent()` | derives absence from `detected == "no_image"` (0.50 prec), then `eruption_state`, then the arch map | unchanged, then **overwritten** by `apply_absent` with `absent(case)`, `source: "facts.teeth_absent, FOV-gated"` |
 | `postprocess_pred.toothless_fdis()` | gates on that derived list | unchanged, then `_gate_on_absent` re-gates on `absent(case)`, which is the stricter pass |
-| `validate_summary_with_facts.py` `absent` rule | gated on raw `teeth_absent`, ungated | **not in the path** — that gate is reached only by `code/arms/postprocess_val_now.sh`, the older arm-building script |
+| `validate_summary_with_facts.py` `absent` rule | gated on raw `teeth_absent`, ungated | **not in the path** — that gate is reached only by `scripts/postprocess_val_now.sh`, the older arm-building script |
 
 **The gate runs last, and that ordering is load-bearing.** It sat inside
 `apply_absent` first — i.e. before the rules that re-source the per-tooth
@@ -1949,6 +1949,43 @@ graded vocabulary for real.
 
 ## 4. Reference
 
+### The rules are a config file — `configs/postprocess/`
+
+Every rule in section 3, every cross-source gate and the FOV policy is a key in
+`configs/postprocess/<arm>.yaml`. The code that applies them
+(`code/pipeline/postprocess/`) does not change between experiments; the config
+does. `code/pipeline/postprocess/rules_config.py` is the binding table that
+maps each key to the module constant it sets, and it is the only place that
+mapping is written down.
+
+| file | arm |
+|---|---|
+| `default.yaml` | the main arm — `aksssr_v7_trained_arm6`, Final 0.4658 / F1 0.5139 |
+| `no_source_rules.yaml` | the eleven rules off, facts file still read |
+| `cross_validate.yaml` | the pre-2026-08-07 precision-gate arm |
+
+```bash
+POSTPROCESS_CONFIG=configs/postprocess/no_source_rules.yaml \
+    scripts/postprocess_now.sh <run_dir>
+
+# check an arm before spending a run on it -- '*' marks every non-default key
+python3 code/pipeline/postprocess/postprocess_pred.py --print-config \
+    --config configs/postprocess/my_arm.yaml --pred-dir x --out-dir y
+```
+
+Two things this changes about reading the numbers in this document.
+
+**`no_source_rules.yaml` and `NO_SOURCE_RULES=1` are different ablations.** The
+environment variable drops `--facts-dir`, which also takes away the maxilla FOV
+override of *THE RULE — maxilla FOV scope*; the config keeps the facts file and
+turns off only the eleven rules. The +0.06 figure was measured the first way.
+The config is the cleaner isolation and the two are not interchangeable.
+
+**Every summary now records its own arm** under `postprocess_config`, listing
+the config path and only the keys that differ from `default.yaml`. `outputs/` is
+gitignored and job logs rotate, so this is the only durable answer to "which
+arm produced this file". `configs/postprocess/README.md` has the rest.
+
 ### Running it
 
 `official_ranking.py` runs on the login node, not via `sbatch` — `conda` is not
@@ -1961,18 +1998,21 @@ source ~/miniconda3/etc/profile.d/conda.sh && conda activate cbct_base
 cd ~/project_ToothFairy4
 
 # postprocess + synthesize + survey, from an existing predictions/ dir.
-# --facts-dir (hence the source rules) is on by default.
-SPLIT=validate code/pipeline/postprocess/postprocess_now.sh outputs/training_results/vsft_arm6/val_arm6
-NO_SOURCE_RULES=1 code/pipeline/postprocess/postprocess_now.sh <run_dir>   # rebuild the pre-rules arm
+# --facts-dir (hence the source rules) is on by default, and the arm is
+# configs/postprocess/default.yaml unless POSTPROCESS_CONFIG names another.
+SPLIT=validate scripts/postprocess_now.sh outputs/training_results/vsft_arm6/val_arm6
+NO_SOURCE_RULES=1 scripts/postprocess_now.sh <run_dir>   # rules AND facts off
+POSTPROCESS_CONFIG=configs/postprocess/no_source_rules.yaml \
+  scripts/postprocess_now.sh <run_dir>                   # rules off, facts kept
 
 # free, deterministic, and the right way to choose between arms
 NO_RADFACT=1 OUT_DIR=<run_dir>/rank_norad_ \
-  bash code/eval/evaluation.sh validate <run_dir>/synthesized_reports
+  bash scripts/evaluation.sh validate <run_dir>/synthesized_reports
 
 # the official number: persistent qwen3-14b judge on an A100
-sbatch --partition=gpu --qos=a100 --gres=gpu:a100:1 code/eval/judge_server.sh
+sbatch --partition=gpu --qos=a100 --gres=gpu:a100:1 scripts/judge_server.sh
 OUT_DIR=<run_dir>/official_ranking_rules \
-  code/eval/eval_now.sh validate <run_dir>/synthesized_reports
+  scripts/eval_now.sh validate <run_dir>/synthesized_reports
 scancel -n judge
 ```
 

@@ -4,10 +4,10 @@
 #
 # WHY THIS EXISTS
 # ---------------
-# code/eval/evaluation.sh with JUDGE_BACKEND=vllm starts its own vLLM, evaluates,
+# scripts/evaluation.sh with JUDGE_BACKEND=vllm starts its own vLLM, evaluates,
 # then kills it -- so every evaluation pays the 15-25 min model load. This
 # script does ONLY the serving half. Start it once, then run
-# code/eval/eval_now.sh as many times as you like against it; each run costs just
+# scripts/eval_now.sh as many times as you like against it; each run costs just
 # the RadFact calls.
 #
 # THE ONE THING THAT TRIPS PEOPLE UP
@@ -15,14 +15,14 @@
 # The server runs on a GPU COMPUTE node (s0-n0x), not on the login node where
 # you run the evaluation. So http://localhost:8001 will NOT reach it -- the
 # client has to use this node's hostname. That is exactly what
-# code/eval/eval_now.sh resolves for you, and this script prints the ready-to-paste
+# scripts/eval_now.sh resolves for you, and this script prints the ready-to-paste
 # URL into its log.
 #
 # Usage:
-#   sbatch --partition=gpu --qos=a100 --gres=gpu:a100:1 code/eval/judge_server.sh
+#   sbatch --partition=gpu --qos=a100 --gres=gpu:a100:1 scripts/judge_server.sh
 #
 #   # then, from the login node, any number of times:
-#   code/eval/eval_now.sh validate outputs/<arm>/synthesized_reports
+#   scripts/eval_now.sh validate outputs/<arm>/synthesized_reports
 #
 #   # when finished (it does NOT stop by itself before --time):
 #   scancel -n judge
@@ -69,7 +69,7 @@ if [ ! -f "$CONTAINER" ]; then
 fi
 if ! nvidia-smi -L >/dev/null 2>&1; then
     echo "[FAIL] No GPU visible on $(hostname). Submit with:"
-    echo "[FAIL]   sbatch --partition=gpu --qos=a100 --gres=gpu:a100:1 code/eval/judge_server.sh"
+    echo "[FAIL]   sbatch --partition=gpu --qos=a100 --gres=gpu:a100:1 scripts/judge_server.sh"
     exit 1
 fi
 
@@ -128,7 +128,7 @@ for i in $(seq 1 180); do          # 180 x 10s = 30 min
         echo "[PASS] Judge ready after $((i * 10))s"
         echo "============================================================"
         echo "  Evaluate now, from the LOGIN node:"
-        echo "    code/eval/eval_now.sh validate outputs/<arm>/synthesized_reports"
+        echo "    scripts/eval_now.sh validate outputs/<arm>/synthesized_reports"
         echo ""
         echo "  Or point any client at:"
         echo "    --judge-backend vllm --vllm-url $JUDGE_URL --model $SERVED_NAME"

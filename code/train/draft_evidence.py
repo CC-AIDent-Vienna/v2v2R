@@ -19,7 +19,7 @@ only doing the second. A model that cannot reliably find a post and core unaided
 can still write what one looks like -- a wide radiopaque column running from the
 crown into the coronal third, wider and brighter than the filling continuing to
 the apex -- because that is knowledge of the feature class, not a reading of
-this picture. Audition scores (code/pipeline/infer/pool_infer.sh) therefore bound what the
+this picture. Audition scores (scripts/pool_infer.sh) therefore bound what the
 teacher can FIND, not what it can usefully SAY.
 
 The failure that remains is memory dressed as observation: prose that invents

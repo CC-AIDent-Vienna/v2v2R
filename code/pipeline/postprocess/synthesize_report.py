@@ -42,6 +42,23 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+# Repo bootstrap -- see code/_repo.py.
+import sys as _sys
+import pathlib as _pathlib
+_sys.path.insert(0, str(next(
+    p for p in _pathlib.Path(__file__).resolve().parents
+    if (p / "_repo.py").is_file())))
+from _repo import add_code_paths  # noqa: E402
+add_code_paths()
+import rules_config  # noqa: E402  -- THE ARM IS THE CONFIG FILE
+
+# THIS RENDERER HAS TWO SETTABLE THINGS and they are bound in
+# rules_config.BINDINGS: `report.render_fillings` (RENDER_FILLINGS below) and
+# `priors.canal_location` (DEFAULT_CANAL_LOCATION below, which source_rules.py
+# also reads -- the config is now the ONE place that prior is stated). Every
+# other string in this file is a report template, which is the schema's and the
+# radiologist's business, not an experiment's, and stays in code.
+
 
 # ── Text-list joining helpers ──────────────────────────────────────────────
 
@@ -687,7 +704,7 @@ def render_restoration_summary(restorations: Dict,
     FILLINGS ARE BACK, 2026-08-16, and the other two are not -- which is why
     this function no longer silences the group as a unit. The three were
     silenced together because they share a renderer, not because they share
-    evidence: measured per source (docs/postprocess_pipeline.md, THE RULE --
+    evidence: measured per source (docs/postprocess.md, THE RULE --
     fillings), the composite's own `with_fillings` scores 0.39 precision,
     which clears the >=0.35 bar every other reported finding meets, while
     crown (0.28/0.10) and post-and-core (0.07/0.24) do not.
@@ -1337,7 +1354,15 @@ def synthesize_report(summary: Dict) -> str:
     # Without it the fillings sentence would carry the arch survey's aliased
     # `restoration` claims -- 161 against the composite's 38, at 0.17
     # precision. See render_restoration_summary.
-    rules_applied = isinstance(summary.get("source_rules"), dict)
+    # THE FILLINGS RULE SPECIFICALLY, not "the source rules ran at all". The
+    # key is written by source_rules.apply() whenever a facts file was present,
+    # INCLUDING when every rule is switched off by a config -- so testing the
+    # key's presence let an ablation arm render the aliased fillings group, the
+    # exact 134-false-claims case render_restoration_summary is gated against.
+    # The `applied` list is what says which rules actually ran.
+    _rules = summary.get("source_rules")
+    rules_applied = (isinstance(_rules, dict)
+                     and "fillings" in (_rules.get("applied") or []))
 
     blocks = [
         ("Mandible",            render_mandible_main(summary["mandible"], dtype,
@@ -1365,7 +1390,20 @@ def main():
     ap.add_argument("--out-dir", required=True,
                     help="Output directory for {case_id}.txt report files")
     ap.add_argument("--case-ids", nargs="+", default=None)
+    ap.add_argument("--config", default=None, metavar="PATH",
+                    help="The same configs/postprocess/*.yaml postprocess_pred.py "
+                         "was given. It settles report.render_fillings and the "
+                         "canal-location prior. PASS THE SAME FILE TO BOTH: the "
+                         "summaries and the report text are one arm, and a "
+                         "renderer running defaults over summaries built by an "
+                         "ablation is a mixed arm with nothing in the output "
+                         "saying so. infer.py passes it to both for this reason.")
     args = ap.parse_args()
+
+    try:
+        rules_config.load_and_apply(args.config)
+    except rules_config.ConfigError as exc:
+        ap.error(str(exc))
 
     summary_path = Path(args.summary_dir)
     if summary_path.is_file():

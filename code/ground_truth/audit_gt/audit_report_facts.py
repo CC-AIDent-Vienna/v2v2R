@@ -34,10 +34,10 @@ evidence; they are the same failure twice.
                         reports as a note, not an error.
 
 Usage:
-    python3 code/ground_truth/audit_report_facts.py --split training
-    python3 code/ground_truth/audit_report_facts.py --split training --screen laterality
-    python3 code/ground_truth/audit_report_facts.py --split training --json audit.json
-    python3 code/ground_truth/audit_report_facts.py --split training --case-ids A095 A003
+    python3 code/ground_truth/audit_gt/audit_report_facts.py --split training
+    python3 code/ground_truth/audit_gt/audit_report_facts.py --split training --screen laterality
+    python3 code/ground_truth/audit_gt/audit_report_facts.py --split training --json audit.json
+    python3 code/ground_truth/audit_gt/audit_report_facts.py --split training --case-ids A095 A003
 
 Exit code is 1 when any ERROR-level finding survives, so this can gate a
 rebuild: stage 2 is deterministic, and replaying it over bad stage-1 output

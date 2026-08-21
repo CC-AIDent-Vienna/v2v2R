@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 """
-code/competition/competition_runner.py
+code/pipeline/infer.py
 
 One case or a whole split, start to finished report.
 
-ONE CASE is the shape it was written for -- Grand Challenge gives a fresh
+This is the inference ENTRY POINT: `scripts/run_infer.sh` is the shell runner
+that submits it. It was `competition_runner.py` until 2026-08-21, when the
+Grand Challenge submission finished and the file stopped needing a name that
+described an occasion rather than a job.
+
+ONE CASE is the shape it was written for -- Grand Challenge gave a fresh
 container, an A10G-class card, and 15 minutes of wall clock for everything --
-and that constraint is what makes the schedule below worth having.
+and that constraint is what makes the schedule below worth having. The
+constraint is gone; the schedule is kept, because every reason it exists (the
+next paragraph but one) is a reason independent of the deadline that prompted
+it.
 
 A WHOLE SPLIT is the same code with the case loop around the CPU half:
 --dataset-dir instead of --volume/--mask, and the four stages after rendering
@@ -104,7 +112,7 @@ from _repo import module_path  # noqa: E402
 
 # Tokens of KV cache one of this pipeline's requests occupies, measured on the
 # v7.1 validate runs. Used to turn the server's reported pool into a concurrency
-# ceiling; see code/pipeline/aksssr_pipeline.sh's header for why the "Maximum concurrency"
+# ceiling; see scripts/aksssr_pipeline.sh's header for why the "Maximum concurrency"
 # line vLLM prints is the wrong number to read.
 TOKENS_PER_REQUEST = 6200
 FALLBACK_CONCURRENCY = 8
@@ -282,9 +290,23 @@ def run_generator(script: str, args: List[str], phases: Phases,
 
 
 def prepare_facts(case: str, mask: Path, facts_in: Optional[Path],
-                  out_dir: Path, phases: Phases) -> Optional[Path]:
+                  out_dir: Path, phases: Phases,
+                  audit: bool = False) -> Optional[Path]:
     """
-    Audit the case's facts against its mask, and hand back the audited copy.
+    Stage the case's facts under out_dir, optionally auditing them first.
+
+    THE AUDIT IS OFF BY DEFAULT AS OF 2026-08-21, and that is a statement
+    about where facts come from, not about whether the audit is right.
+    `dataset/<split>/facts` now holds facts that have ALREADY been audited and
+    accepted upstream, so running audit_facts.py over them again is a no-op:
+    measured on all 40 validate cases, "Cases already consistent: 40",
+    zero files changed, zero bytes. audit_facts.py is kept as the backup for
+    the case it was written for -- facts arriving straight from a
+    segmentation component, unreviewed -- and --audit-facts turns it back on.
+
+    Keeping it off is also what makes this renderer agree with
+    build_vqa_pairs.py: both now render from the same unmodified facts, so
+    the same case produces the same pixels whichever driver made them.
 
     THE REAL INPUT SHAPE. A CBCT arrives; the segmentation AND the facts come
     from upstream (the segmentation component), so this runner does not extract
@@ -368,6 +390,9 @@ def prepare_facts(case: str, mask: Path, facts_in: Optional[Path],
             return None
         shutil.copy2(built, target)
         phases.end("facts:extract")
+
+    if not audit:
+        return target
 
     phases.start("facts:audit")
     proc = subprocess.run([sys.executable, str(module_path("audit_facts.py")),
@@ -534,17 +559,55 @@ def main() -> None:
                     help="skip a case whose images and prediction already "
                          "exist. Rendering is the expensive half of a batch "
                          "run and a killed job should not repeat it.")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="cases rendered in parallel during --stage "
+                         "images. 1 (default) keeps the three generators "
+                         "concurrent WITHIN a case, which hides the vLLM "
+                         "load behind the render for one case. >1 goes "
+                         "serial within a case and parallel across them, "
+                         "which is what a whole split wants. Needs "
+                         "--dataset-dir.")
+    ap.add_argument("--audit-facts", action="store_true",
+                    help="run audit_facts.py over the facts before rendering. OFF by default: dataset/<split>/facts is already audited upstream, and the pass is a measured no-op there (40/40 validate cases unchanged). Turn it on for facts that arrive straight from a segmentation component.")
     ap.add_argument("--no-facts", action="store_true",
                     help="No facts at all: captions carry none and the source "
                          "rules stay off. The NO_FACTS=1 arm.")
     ap.add_argument("--out-dir", type=Path, required=True,
                     help="images/, facts/, predictions/, summaries/ and "
-                         "reports/ are written under here, one set for the "
-                         "whole run rather than one per case")
-    ap.add_argument("--model", required=True,
+                         "synthesized_reports/ are written under here, one set "
+                         "for the whole run rather than one per case")
+    ap.add_argument("--stage", choices=("all", "images", "infer", "post"),
+                    default="all",
+                    help="which half of the pipeline to run. The stages exist "
+                         "because they want DIFFERENT HARDWARE: `images` is "
+                         "pure CPU and should not hold an A100 while it "
+                         "renders, `infer` is the only GPU stage, and `post` "
+                         "needs neither and runs on the login node. `all` "
+                         "(default) is the single-case path, where splitting "
+                         "them would only add three queue waits. Each stage "
+                         "reads what the previous one left in --out-dir.")
+    ap.add_argument("--gt-dir", type=Path,
+                    help="stage `post`: generated ground truth to survey the "
+                         "summaries against, writing survey/survey_facts_*."
+                         "{txt,json}. Omitted, postprocess and synthesis still "
+                         "run and only the survey is skipped -- the survey is "
+                         "a measurement, not a product.")
+    ap.add_argument("--postprocess-config", type=Path, default=None,
+                    metavar="PATH",
+                    help="stage `post`: THE ARM. A configs/postprocess/*.yaml "
+                         "naming which of the source rules, cross-source gates "
+                         "and FOV policies of docs/postprocess.md are on. "
+                         "Defaults to configs/postprocess/default.yaml when it "
+                         "is present -- the arm-6 settings, which are also what "
+                         "the code carries as constants, so naming it changes "
+                         "nothing except that the summaries then record which "
+                         "arm wrote them. Passed to BOTH postprocess_pred.py "
+                         "and synthesize_report.py, which is the point: they "
+                         "are one arm and must not be configured separately.")
+    ap.add_argument("--model",
                     help="path INSIDE the container. The shipping model is the "
                          "trained arm, models/best_model (the LoRA merged "
-                         "into the AWQ base); code/competition/competition_sim.sh's header "
+                         "into the AWQ base); scripts/competition_sim.sh's header "
                          "records what that arm wins and where it regresses.")
     ap.add_argument("--schema", type=Path, default=Path("schema/schema.json"))
     ap.add_argument("--project-dir", type=Path, default=Path("."))
@@ -563,11 +626,25 @@ def main() -> None:
                     help="images and timing only; skip vLLM entirely")
     args = ap.parse_args()
 
-    if bool(args.case_id) == bool(args.dataset_dir):
+    # What this run actually does. Derived once, read everywhere below.
+    do_images = args.stage in ("all", "images")
+    do_infer = args.stage in ("all", "infer")
+    do_post = args.stage in ("all", "post")
+    need_server = do_infer and not args.no_server
+
+    # `post` is directory-shaped: postprocess_pred.py and synthesize_report.py
+    # read predictions/ and summaries/, not a case list. So it is the one stage
+    # that may be handed nothing but --out-dir, which is what makes it the
+    # drop-in for the postprocess_now.sh tuning loop.
+    if args.stage == "post" and not (args.case_id or args.dataset_dir):
+        pass
+    elif bool(args.case_id) == bool(args.dataset_dir):
         ap.error("give either --case-id (with --volume and --mask) or "
                  "--dataset-dir, not both and not neither")
     if args.case_id and not (args.volume and args.mask):
         ap.error("--case-id needs --volume and --mask")
+    if need_server and not args.model:
+        ap.error("--model is required unless --stage images/post or --no-server")
 
     phases = Phases()
     out_dir = args.out_dir
@@ -576,7 +653,8 @@ def main() -> None:
 
     # Resolved BEFORE the server starts: a typo in --case-list should cost a
     # second, not a model load.
-    cases = resolve_cases(args)
+    cases = ([] if args.stage == "post" and not (args.case_id or args.dataset_dir)
+             else resolve_cases(args))
     if len(cases) > 1:
         print(f"[INFO] {len(cases)} case(s): {', '.join(c[0] for c in cases[:6])}"
               f"{' ...' if len(cases) > 6 else ''}", file=sys.stderr)
@@ -586,7 +664,7 @@ def main() -> None:
     ready_s = 0.0
 
     # ── vLLM first, in the background: it is the long pole and needs no CPU ──
-    if not args.no_server:
+    if need_server:
         server = VLLMServer(
             args.model, args.port, args.max_model_len,
             args.gpu_memory_utilization, args.max_images_per_prompt,
@@ -617,8 +695,21 @@ def main() -> None:
     # predecessors, and every stage after the loop is directory-shaped
     # already.
     facts_dir: Optional[Path] = None
-    phases.start("images:total")
-    for case, volume, mask, facts_in in cases:
+    if not do_images:
+        # Stage `infer` and stage `post` both need the facts DIRECTORY that a
+        # previous `images` run audited: postprocess reads it to turn the source
+        # rules on. Taking it from disk rather than from the loop below is what
+        # lets the stages be separate jobs instead of one process.
+        _f = out_dir / "facts"
+        if not args.no_facts and _f.is_dir() and any(_f.glob("*.json")):
+            facts_dir = _f
+        elif not args.no_facts:
+            print(f"[WARN] no audited facts in {_f} -- the source rules will be "
+                  f"OFF for this run. Run --stage images first.", file=sys.stderr)
+
+    if do_images:
+        phases.start("images:total")
+    for case, volume, mask, facts_in in (cases if do_images else []):
         # --resume needs BOTH halves present. The audited facts are checked
         # separately from the images because postprocess reads the facts
         # DIRECTORY: one case missing its copy turns the source rules off for
@@ -637,15 +728,40 @@ def main() -> None:
             print(f"[case] {case}", file=sys.stderr)
         facts_file = None
         if not args.no_facts:
-            facts_file = prepare_facts(case, mask, facts_in, out_dir, phases)
+            facts_file = prepare_facts(case, mask, facts_in, out_dir, phases,
+                                       audit=args.audit_facts)
             if facts_file is not None:
                 facts_dir = Path(facts_file).parent
         if args.resume and already_rendered(case, images_dir):
             continue
-        generate_images(case, volume, mask, facts_file, images_dir, phases)
-    phases.end("images:total")
+        if args.workers == 1:
+            generate_images(case, volume, mask, facts_file, images_dir, phases)
+    if do_images and args.workers > 1:
+        # The batch renderer, from the preprocess driver. The loop
+        # above has only STAGED the facts (a copy, now that the
+        # audit is off by default); rendering is delegated so there
+        # is ONE implementation of "render a case" rather than two
+        # that can drift.
+        #
+        # Why the split: at --workers 1 the three independent
+        # generators run CONCURRENTLY within the case, which is what
+        # hides the vLLM load behind the render for a single case.
+        # At --workers > 1 there is no server to hide behind and the
+        # concurrency belongs BETWEEN cases, so the generators go
+        # serial and the pool provides it. Nesting the two
+        # oversubscribes the allocation and is slower than either.
+        from build_vqa_pairs import render_missing   # noqa: E402
+        if args.dataset_dir is None:
+            raise SystemExit('[FAIL] --workers > 1 needs --dataset-dir')
+        render_missing([c[0] for c in cases], args.dataset_dir,
+                       images_dir, args.no_facts, False,
+                       args.workers,
+                       facts_dir=None if args.no_facts
+                       else out_dir / 'facts')
+    if do_images:
+        phases.end("images:total")
 
-    if server:
+    if do_infer and server:
         waiter.join()
         if server_err:
             print(f"[FAIL] {server_err[0]}", file=sys.stderr)
@@ -653,6 +769,21 @@ def main() -> None:
             sys.exit(2)
 
     # ── qa_pairs, then inference ────────────────────────────────────────────
+    if do_infer:
+        _run_inference(args, out_dir, images_dir, cases, server, phases)
+
+    if do_post:
+        _run_postprocess(args, out_dir, facts_dir, cases, phases)
+
+    if server:
+        server.stop()
+
+    _report(args, cases, phases, server, ready_s)
+
+
+def _run_inference(args, out_dir: Path, images_dir: Path, cases: List,
+                   server: "Optional[VLLMServer]", phases: "Phases") -> None:
+    """qa_pairs.jsonl, then the VLM calls. The only GPU stage."""
     phases.start("qa_pairs")
     qa_jsonl = out_dir / "qa_pairs.jsonl"
     # --cases, always, and not because the images dir usually holds only what
@@ -695,32 +826,123 @@ def main() -> None:
                        check=True)
         phases.end("inference")
 
-        phases.start("postprocess")
-        # --facts-dir turns on THE SOURCE RULES (docs/postprocess_pipeline.md): ten
-        # findings re-sourced from the segmentation instead of the VLM reads.
-        # Without it postprocess emits the pre-2026-08-16 summary and every
-        # rule measured on validate-40 is silently absent from the submission.
-        post = [sys.executable, str(module_path("postprocess_pred.py")),
-                "--pred-dir", str(out_dir / "predictions"),
-                "--out-dir", str(out_dir / "summaries")]
-        if facts_dir is not None:
-            post += ["--facts-dir", str(facts_dir)]
-        subprocess.run(post, check=True)
-        phases.end("postprocess")
 
-        phases.start("synthesize")
-        subprocess.run([sys.executable, str(module_path("synthesize_report.py")),
-                        "--summary-dir", str(out_dir / "summaries"),
-                        "--out-dir", str(out_dir / "reports")], check=True)
-        phases.end("synthesize")
+def _postprocess_config(args) -> "Optional[Path]":
+    """Which configs/postprocess/*.yaml stage `post` runs under.
 
-        server.stop()
+    --postprocess-config if given, else the shipped default.yaml if the repo
+    has one. THE FALLBACK IS NOT A BEHAVIOUR CHANGE: default.yaml restates the
+    constants the modules already carry, and postprocess_pred.py --print-config
+    fails loudly if the two ever drift. What naming it buys is provenance --
+    every summary then records the arm it was built under, which matters
+    because outputs/ is gitignored and job logs rotate.
 
-    # ── the report ──────────────────────────────────────────────────────────
+    A release that trimmed configs/ still runs: no file, no --config, and the
+    modules use their own constants exactly as before.
+    """
+    if getattr(args, "postprocess_config", None) is not None:
+        cfg = Path(args.postprocess_config)
+        if not cfg.is_file():
+            raise SystemExit(f"[FAIL] --postprocess-config {cfg} does not exist")
+        return cfg
+    shipped = REPO_ROOT / "configs" / "postprocess" / "default.yaml"
+    return shipped if shipped.is_file() else None
+
+
+def _run_postprocess(args, out_dir: Path, facts_dir: "Optional[Path]",
+                     cases: List, phases: "Phases") -> None:
+    """predictions -> summaries -> reports -> the fact-level survey.
+
+    Neither GPU nor model, which is what makes this the tuning loop: a flag
+    change on postprocess_pred.py is re-measured here in seconds per case. The
+    three steps are the three stages of scripts/postprocess_now.sh, in the
+    same order and with the same meaning.
+    """
+    # --case-ids here, --cases in build_vqa_pairs.py. The three postprocess
+    # tools agree with each other and disagree with the payload builder; this
+    # is the seam, so it is spelled out rather than shared.
+    case_args = (["--case-ids"] + [c[0] for c in cases]) if cases else []
+
+    phases.start("postprocess")
+    # --facts-dir turns on THE SOURCE RULES (docs/postprocess.md): ten
+    # findings re-sourced from the segmentation instead of the VLM reads.
+    # Without it postprocess emits the pre-2026-08-16 summary and every
+    # rule measured on validate-40 is silently absent from the output.
+    post = [sys.executable, str(module_path("postprocess_pred.py")),
+            "--pred-dir", str(out_dir / "predictions"),
+            "--out-dir", str(out_dir / "summaries")] + case_args
+    if facts_dir is not None:
+        post += ["--facts-dir", str(facts_dir)]
+    # --config is THE ARM, and it goes to the renderer below as well. Passing
+    # it to only one of the two would build summaries under one set of rules
+    # and render them under another, with nothing in the output saying so.
+    cfg = _postprocess_config(args)
+    if cfg is not None:
+        post += ["--config", str(cfg)]
+    subprocess.run(post, check=True)
+    phases.end("postprocess")
+
+    # synthesized_reports/, NOT reports/. Every other consumer -- eval_now.sh,
+    # official_ranking.py, postprocess_now.sh -- names it that way, and a run
+    # whose reports sit somewhere else is a run the scorer silently cannot
+    # find.
+    reports_dir = out_dir / "synthesized_reports"
+    phases.start("synthesize")
+    synth = [sys.executable, str(module_path("synthesize_report.py")),
+             "--summary-dir", str(out_dir / "summaries"),
+             "--out-dir", str(reports_dir)] + case_args
+    if cfg is not None:
+        synth += ["--config", str(cfg)]
+    subprocess.run(synth, check=True)
+    phases.end("synthesize")
+
+    if args.gt_dir is None:
+        print("[INFO] no --gt-dir: summaries and reports are built, the survey "
+              "is skipped", file=sys.stderr)
+        return
+    if not Path(args.gt_dir).is_dir():
+        print(f"[WARN] --gt-dir {args.gt_dir} does not exist -- survey skipped. "
+              f"Generate it with parse_reports_to_gt.py.", file=sys.stderr)
+        return
+
+    # Text and JSON both land under survey/, timestamped, so successive runs
+    # diff directly against each other -- that comparison is the whole reason
+    # to re-run this after a flag change, and it is why the file is never
+    # overwritten.
+    survey_dir = out_dir / "survey"
+    survey_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    txt = survey_dir / f"survey_facts_{stamp}.txt"
+    phases.start("survey")
+    proc = subprocess.run(
+        [sys.executable, str(module_path("structured_findings_evaluation.py")),
+         str(out_dir), "--gt-dir", str(args.gt_dir),
+         "--schema", str(args.schema),
+         "--json-out", str(survey_dir / f"survey_facts_{stamp}.json")]
+        + case_args,
+        capture_output=True, text=True)
+    txt.write_text(proc.stdout + proc.stderr, encoding="utf-8")
+    sys.stdout.write(proc.stdout)
+    phases.end("survey")
+    if proc.returncode != 0:
+        # Not fatal: the summaries and reports ARE built, and the survey is a
+        # measurement of them. Exiting non-zero here would make a scoring bug
+        # look like a pipeline failure.
+        print(f"[WARN] survey exited {proc.returncode}; {txt} has the output",
+              file=sys.stderr)
+    else:
+        print(f"[PASS] survey -> {txt}", file=sys.stderr)
+
+
+def _report(args, cases: List, phases: "Phases",
+            server: "Optional[VLLMServer]", ready_s: float) -> None:
+    """The timing table. Every stage that ran, and what the server cost."""
     print("\n" + "=" * 78)
-    print("COMPETITION SIMULATION -- "
-          + (f"case {cases[0][0]}" if len(cases) == 1
-             else f"{len(cases)} cases, one server"))
+    print(f"infer.py --stage {args.stage} -- "
+          + ("no cases named" if not cases
+             else f"case {cases[0][0]}" if len(cases) == 1
+             else f"{len(cases)} cases"
+                  + (", one server" if server else "")))
     print("=" * 78)
     print(phases.table())
     if server:
@@ -740,19 +962,25 @@ def main() -> None:
             print(f"    {'unattributed':16} {ready_s - named:7.1f}s"
                   "   <- spawn, imports, CUDA context, API server bind")
     total = time.time() - phases.t0
-    budget = 15 * 60
-    if len(cases) == 1:
-        print(f"\n{'WITHIN' if total < budget else 'OVER'} the 15-minute budget: "
-              f"{total:.0f}s of {budget}s ({100 * total / budget:.0f}%)")
+    if not cases:
+        print(f"\ntotal {total:.0f}s")
+    elif len(cases) == 1:
+        # Kept from the Grand Challenge era, where 15 minutes per container
+        # start was the hard limit. The submission is finished and nothing
+        # enforces this now, but a single case that has drifted past it is
+        # still the clearest signal that the startup overlap has broken.
+        budget = 15 * 60
+        print(f"\none case in {total:.0f}s "
+              f"({100 * total / budget:.0f}% of the 15-minute container budget "
+              f"the submission was built against)")
     else:
-        # The 15-minute budget is per CONTAINER START, and a batch run starts
-        # one server for all of them -- so the budget does not apply and
-        # printing it against the total would be a meaningless failure. What a
-        # batch run says about the budget is the per-case cost with the load
-        # already paid, which is the optimistic half of it.
+        # That budget is per CONTAINER START, and a batch run starts one server
+        # for all of them, so printing it against the total would be a
+        # meaningless failure. What a batch run measures is the per-case cost
+        # with the load already paid.
         print(f"\n{len(cases)} cases in {total:.0f}s -- {total / len(cases):.0f}s "
-              f"per case with the model load shared. The 15-minute budget is "
-              f"per container start; use --case-id to measure it.")
+              f"per case" + (", with the model load shared. Use --case-id for "
+                             "the cold-start number." if server else "."))
 
 
 if __name__ == "__main__":

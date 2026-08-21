@@ -43,7 +43,7 @@ Usage:
         --static-captions
 
 Then rebuild the QA pairs so the new captions reach the VLM (step 5 of
-code/pipeline/aksssr_pipeline.sh -- everything before it can be skipped):
+scripts/aksssr_pipeline.sh -- everything before it can be skipped):
 
     python code/pipeline/preprocess/build_vqa_pairs.py \
         --schema schema/schema.json \

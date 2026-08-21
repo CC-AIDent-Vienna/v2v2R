@@ -1,0 +1,153 @@
+#!/bin/bash
+# =============================================================================
+# scripts/run_gen_gt.sh -- reference reports -> the labels everything is scored
+# against.
+#
+#   sbatch --partition=gpu --qos=a100 --gres=gpu:a100:1 \
+#          scripts/run_gen_gt.sh validate          # the full run, needs a GPU
+#
+#   STAGE=derive scripts/run_gen_gt.sh validate    # login node, no GPU, no queue
+#   DRY_RUN=1    scripts/run_gen_gt.sh validate    # group the reports, call nothing
+#
+# All the orchestration is in code/ground_truth/gen_gt.py -- the server
+# lifecycle, the port proofs, the flag marshalling and the output audit. This
+# file is the SLURM directives, the conda activation and the container path.
+#
+# PASS ONE OF THESE, OR THE RESULT IS UNUSABLE FOR 26 OF 40 VALIDATE CASES
+# -----------------------------------------------------------------------
+#   FIRST_REPORT_ONLY=1   one report per case, the lowest-numbered radiologist
+#   CONSENSUS=1           merge every radiologist of a case, field by field
+#
+# structured_findings_evaluation.py looks up exactly one file per case,
+# {case}_gt.json. With neither flag, a multi-report case writes only
+# {case}_{radiologist}_gt.json -- so that case is skipped with NO ERROR and the
+# run reports a plausible score over a subset. gen_gt.py counts both filename
+# shapes when it finishes and warns by name, but the flag is the fix.
+#
+# The two are mutually exclusive: consensus needs every radiologist's report.
+#
+# TWO STAGES, AND ONLY THE FIRST WANTS THIS JOB'S GPU
+# ---------------------------------------------------
+#   STAGE=all     (default) LLM extraction -> *_report_facts.json, then the
+#                 deterministic derivation -> *_gt.json. Needs the server.
+#   STAGE=derive  the second half alone, from report_facts already on disk.
+#                 Pure CPU, so run it on the login node -- which is what makes
+#                 a change to the deterministic half cheap to test. Verified
+#                 to reproduce dataset/validate's live *_gt.json byte for byte.
+#
+# WHY THE PORT DEFAULT IS 8011 AND NOT 8001
+# -----------------------------------------
+# scripts/judge_server.sh defaults to 8001 and takes --qos=a100 too, so it can
+# hold the same node. vLLM binds with SO_REUSEPORT, so a second server does NOT
+# fail with "address already in use" -- both bind and the kernel round-robins
+# between them. The judge serves `qwen3-14b-text` and this job asks for
+# `qwen3-text`, so about half of every extraction call 404s: see
+# logs/gen_gt_549316.log (342 x 200) against logs/judge_server_549303.log
+# (379 x 404) at the same timestamps. gen_gt.py scans for a free port, waits on
+# /v1/models rather than /health, and then probes eight times before trusting
+# it. PORT= overrides the start of the scan.
+# =============================================================================
+#SBATCH --job-name=gen_gt
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=12:00:00
+#SBATCH --output=logs/gen_gt_%j.log
+#SBATCH --error=logs/gen_gt_%j.err
+#
+# NOTE: --partition/--qos/--gres are deliberately not here. They are site
+# facts, and STAGE=derive wants no GPU at all, so they belong on the submit
+# line until env/cluster.env lands:
+#   sbatch --partition=gpu --qos=a100 --gres=gpu:a100:1 scripts/run_gen_gt.sh validate
+#
+# On an 80GB card there is room for the full context:
+#   MAX_MODEL_LEN=32768 sbatch --qos=a100-sxm4-80gb \
+#       --gres=gpu:a100-sxm4-80gb:1 scripts/run_gen_gt.sh validate
+
+set -euo pipefail
+
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+
+SPLIT="${1:-${SPLIT:-validate}}"
+STAGE="${STAGE:-all}"
+
+case "$SPLIT" in training|validate) ;; *)
+    echo "[FAIL] SPLIT must be training or validate (got '$SPLIT')" >&2; exit 1 ;;
+esac
+case "$STAGE" in all|derive) ;; *)
+    echo "[FAIL] STAGE must be all or derive (got '$STAGE')" >&2; exit 1 ;;
+esac
+
+# Resolved by walking up for schema/schema.json, so this script does not care
+# how deep scripts/ sits.
+PROJECT_DIR="${PROJECT_DIR:-$(d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; \
+    while [ "$d" != "/" ] && [ ! -f "$d/schema/schema.json" ]; do d="$(dirname "$d")"; done; echo "$d")}"
+[ -f "$PROJECT_DIR/schema/schema.json" ] || { echo "[FAIL] no schema/schema.json above $0" >&2; exit 1; }
+
+CONTAINER="${CONTAINER:-${SIF_PATH:-$HOME/containers/extraction.sqsh}}"
+MODEL_DIR="${MODEL_DIR:-$PROJECT_DIR/models}"
+MODEL_NAME="${QWEN_MODEL_NAME:-${MODEL_NAME:-Qwen3-14B}}"
+CONDA_ENV="${CONDA_ENV-cbct_base}"
+
+ARGS=(--split "$SPLIT" --stage "$STAGE"
+      --schema "$PROJECT_DIR/schema/schema.json"
+      --model-dir "$MODEL_DIR" --model-name "$MODEL_NAME")
+
+[ -n "${OUT_DIR:-}"      ] && ARGS+=(--out-dir "$OUT_DIR")
+[ -n "${REPORTS_DIR:-}"  ] && ARGS+=(--reports-dir "$REPORTS_DIR")
+[ -n "${LIMIT:-}"        ] && ARGS+=(--limit "$LIMIT")
+[ -n "${CASE_IDS:-}"     ] && ARGS+=(--case-ids ${CASE_IDS})
+[ -n "${RESUME:-}"       ] && ARGS+=(--resume)
+[ -n "${DRY_RUN:-}"      ] && ARGS+=(--dry-run)
+[ -n "${CONSENSUS:-}"    ] && ARGS+=(--consensus)
+[ -n "${FIRST_REPORT_ONLY:-}" ] && ARGS+=(--first-report-only)
+[ -n "${PORT:-}"         ] && ARGS+=(--port "$PORT")
+[ -n "${MAX_MODEL_LEN:-}" ] && ARGS+=(--max-model-len "$MAX_MODEL_LEN")
+[ -n "${VLLM_URL:-}"     ] && ARGS+=(--vllm-url "$VLLM_URL")
+
+# --consensus is also accepted positionally, which is how this job has always
+# been invoked: `sbatch scripts/run_gen_gt.sh validate --consensus`.
+shift || true
+for arg in "$@"; do
+    [ "$arg" = "--consensus" ] && ARGS+=(--consensus)
+done
+
+# The container is only needed to START vLLM, and only STAGE=all does that.
+# gen_gt.py then calls the server over HTTP from the HOST: extraction makes
+# network calls and loads no model of its own, so there is nothing to gain from
+# running the client inside the image.
+if [ "$STAGE" = all ] && [ -z "${DRY_RUN:-}" ] && [ -z "${VLLM_URL:-}" ]; then
+    [ -f "$CONTAINER" ] || { echo "[FAIL] no container: $CONTAINER" >&2; exit 1; }
+    ARGS+=(--container "$CONTAINER")
+fi
+
+# Do NOT reach conda through `conda info --base` alone. A non-interactive
+# submission (ssh host 'sbatch ...') never sourced ~/.bashrc, so the conda shell
+# function does not exist on the compute node, and on this cluster `conda` is
+# not on PATH even on the login node -- a naive guard silently skips activation
+# and leaves python3 as /usr/bin/python3. Job 551011 is what that costs.
+# CONDA_ENV= (empty) skips activation for a shell already in the right env.
+if [ -n "${CONDA_ENV:-}" ]; then
+    _conda_sh=""
+    command -v conda >/dev/null 2>&1 && \
+        _conda_sh="$(conda info --base 2>/dev/null)/etc/profile.d/conda.sh"
+    for _cand in "$_conda_sh" "${CONDA_BASE:-}/etc/profile.d/conda.sh" \
+                 "$HOME/miniconda3/etc/profile.d/conda.sh" \
+                 "$HOME/anaconda3/etc/profile.d/conda.sh" \
+                 "$HOME/miniforge3/etc/profile.d/conda.sh" \
+                 "/opt/conda/etc/profile.d/conda.sh"; do
+        # shellcheck disable=SC1090
+        [ -n "$_cand" ] && [ -f "$_cand" ] && { source "$_cand"; break; }
+    done
+    command -v conda >/dev/null 2>&1 \
+        || { echo "[FAIL] no conda.sh on this node. Set CONDA_BASE=/path/to/conda, or CONDA_ENV= to use the current environment." >&2; exit 1; }
+    conda activate "$CONDA_ENV" \
+        || { echo "[FAIL] conda activate $CONDA_ENV failed" >&2; exit 1; }
+fi
+echo "[INFO] python3: $(command -v python3)"
+
+mkdir -p "$PROJECT_DIR/logs"
+python3 "$PROJECT_DIR/code/ground_truth/gen_gt.py" "${ARGS[@]}"
+
+echo "[PASS] stage=$STAGE split=$SPLIT done"

@@ -184,6 +184,14 @@ add_code_paths()
 from normalize_pred import (DEFAULT_SCHEMA, normalize_prediction,  # noqa: E402
                             summarize_repairs)
 import source_rules  # noqa: E402  -- the source rules, applied as a post-pass
+import rules_config  # noqa: E402  -- THE ARM IS THE CONFIG FILE; see its docstring
+
+# Every module-level flag below is a DEFAULT, not a decision. Each one is
+# bound to a key in configs/postprocess/*.yaml through rules_config.BINDINGS,
+# and --config overwrites it before any case is read. The value written here
+# is the arm-6 setting, so a run with no --config behaves exactly as this
+# file did before the config layer existed. rules_config.verify_defaults()
+# is the check that the two never drift apart.
 
 
 # ── Constants ─────────────────────────────────────────────────────────────
@@ -3138,7 +3146,7 @@ def build_maxilla_section(g: Dict, teeth: Dict, notes: Optional[List[str]] = Non
 # already caught by the coverage sidecar, which is the same measurement under
 # another name; routing them through the facts only renames the scope_source.
 #
-# SURVEYED against the consensus ground truth (docs/postprocess_pipeline.md, THE
+# SURVEYED against the consensus ground truth (docs/postprocess.md, THE
 # RULE -- maxilla FOV scope): the gate goes 0.850 -> 0.875 on validate-40 and
 # does so on ALL THREE model arms, each moving one case and a DIFFERENT case
 # per arm (A018 arm 6, S0037 arm 5, S0017 AWQ base) -- every arm invents one
@@ -3190,6 +3198,19 @@ MAXILLA_TOOTH_FACTS = frozenset({
 # both arms once there are predictions for a split where the group is more
 # than two cases.
 DROP_EXCLUDED_MAXILLA_TEETH = False
+
+# Whether an excluded maxilla is dropped AT ALL. This was a CLI-only parameter
+# (`--keep-excluded-maxilla`) with no module default, which made it the one arm
+# knob a config file could not name. Given a module default it binds like the
+# rest; `postprocess_prediction(drop_excluded=...)` still overrides it, exactly
+# the way `cross_validate=` overrides REQUIRE_CROSS_SOURCE_AGREEMENT.
+DROP_EXCLUDED_MAXILLA = True
+
+# Same treatment for the wisdom-eruption fallback: take a 3D wisdom fact's
+# missing eruption_state from that tooth's own composite read. Required by any
+# schema that omits the four 3D wisdom facts -- schema_dedup.json does -- and
+# NOT a no-op on the aksssr arm, where 11 of 40 validate cases gain sentences.
+WISDOM_ERUPTION_FALLBACK = False
 
 _MAXILLA_FIELD_CACHE: Dict[str, List[str]] = {}
 
@@ -3351,10 +3372,19 @@ def drop_excluded_maxilla(pred: Dict, schema_path: Optional[str] = None,
 def postprocess_prediction(pred: Dict, normalize: bool = True,
                            schema_path: Optional[str] = None,
                            quiet: bool = False,
-                           wisdom_eruption_fallback: bool = False,
+                           wisdom_eruption_fallback: Optional[bool] = None,
                            cross_validate: Optional[bool] = None,
-                           drop_excluded: bool = True,
+                           drop_excluded: Optional[bool] = None,
                            facts: Optional[Dict] = None) -> Dict:
+    # None means "whatever the configuration says", which is the module global
+    # -- the same contract `cross_validate` has always had, extended to the two
+    # parameters that used to hardcode their own default here and so could not
+    # be set from configs/postprocess/*.yaml. An explicit argument still wins.
+    if wisdom_eruption_fallback is None:
+        wisdom_eruption_fallback = WISDOM_ERUPTION_FALLBACK
+    if drop_excluded is None:
+        drop_excluded = DROP_EXCLUDED_MAXILLA
+
     if normalize:
         pred, repairs = normalize_prediction(pred, schema_path)
         if repairs and not quiet:
@@ -3441,7 +3471,7 @@ def postprocess_prediction(pred: Dict, normalize: bool = True,
     if absent_notes and not quiet:
         print(f"    [WARN] {case_id}: {'; '.join(absent_notes)}", file=sys.stderr)
 
-    # ── THE SOURCE RULES (docs/postprocess_pipeline.md) ────────────────────────
+    # ── THE SOURCE RULES (docs/postprocess.md) ────────────────────────
     # A post-pass, not surgery in the builders above: each rule says a field
     # should come from a different SOURCE, and rewriting the finished dict
     # keeps every rule to one function and leaves this file's existing paths
@@ -3451,6 +3481,13 @@ def postprocess_prediction(pred: Dict, normalize: bool = True,
         if rule_notes and not quiet:
             print(f"    [INFO] {case_id}: source rules -- "
                   f"{'; '.join(rule_notes)}", file=sys.stderr)
+
+    # WHICH ARM WROTE THIS FILE. outputs/ is gitignored and job logs rotate, so
+    # a summary that cannot name its own configuration is a measurement with no
+    # provenance. Only the config path and the keys that DIFFER from the arm-6
+    # defaults are stored -- a run of the defaults stamps an empty dict rather
+    # than thirty lines of restated defaults into all 40 files.
+    out["postprocess_config"] = rules_config.provenance()
 
     return out
 
@@ -3468,7 +3505,7 @@ def main():
                      help="Output directory for {case_id}_summary.json files")
     ap.add_argument("--facts-dir", default=None,
                     help="dataset/<split>/facts -- enables THE SOURCE RULES of "
-                         "docs/postprocess_pipeline.md, which re-source absence, "
+                         "docs/postprocess.md, which re-source absence, "
                          "impaction, endodontic, fillings, crown, implants, "
                          "canal adjacency/location, atrophy and the bridge gate. "
                          "It ALSO hands the maxilla's FOV scope to the facts: "
@@ -3483,6 +3520,21 @@ def main():
                      help="Path to schema.json (passed through to normalize_prediction). "
                           "Explicit is safer than normalize_pred.py's relative-path default "
                           "when running from a SLURM job's working directory.")
+    ap.add_argument("--config", default=None, metavar="PATH",
+                    help="THE ARM. A configs/postprocess/*.yaml naming which of "
+                         "the source rules, cross-source gates and FOV policies "
+                         "of docs/postprocess.md are on. Omitted, the arm-6 "
+                         "defaults apply and behaviour is identical to before "
+                         "the config layer existed. Every legacy flag below "
+                         "still works and OVERRIDES the file, so an existing "
+                         "job script keeps its meaning. See "
+                         "configs/postprocess/README.md.")
+    ap.add_argument("--print-config", action="store_true",
+                    help="Resolve --config over the defaults, print every "
+                         "settable key with the section of docs/postprocess.md "
+                         "that measured it, and exit without reading a "
+                         "prediction. This is how an arm is checked BEFORE a "
+                         "run rather than reconstructed from its output.")
     ap.add_argument("--wisdom-eruption-fallback", action="store_true",
                      help="When a 3D-render wisdom-tooth fact (lower_left_wisdom_tooth "
                           "etc.) gave no eruption_state, take it from that tooth's own "
@@ -3549,23 +3601,51 @@ def main():
         ap.error("--force-maxilla-excluded-prefixes and --keep-excluded-maxilla "
                  "are contradictory")
 
-    # Read off the module global by is_forced_excluded_case, the same way
-    # DEMOTE_UNCERTAIN_TO_NORMAL is, rather than threaded through the builders.
-    if args.drop_excluded_maxilla_teeth:
-        global DROP_EXCLUDED_MAXILLA_TEETH
-        DROP_EXCLUDED_MAXILLA_TEETH = True
-
-    if args.force_maxilla_excluded_prefixes is not None:
-        global FORCE_MAXILLA_EXCLUDED_PREFIXES
-        FORCE_MAXILLA_EXCLUDED_PREFIXES = {
-            c.upper() for c in args.force_maxilla_excluded_prefixes if c.strip()}
-
-    # The uncertainty gate is read from the module global by
-    # demote_uncertain_findings, so the CLI sets it there rather than threading
-    # a parameter through both arch builders for a flag that is off by default.
+    # ── the arm ────────────────────────────────────────────────────────────
+    # THREE LAYERS, in this order: the arm-6 defaults, the config file, then
+    # whatever legacy flag was typed. The last layer is what keeps every job
+    # script and doc example in the repo meaning what it says -- a flag on the
+    # command line is an explicit instruction and outranks a file.
+    #
+    # Nothing below sets a module global by hand any more. rules_config.apply()
+    # writes all of them through BINDINGS, which is also the only list of what
+    # is settable at all, so a knob added there is settable from a config file
+    # and printable by --print-config without this function changing.
+    overrides: Dict[str, object] = {}
+    if args.cross_validate:
+        overrides["cross_source.require_agreement"] = True
+    elif args.no_cross_validate:
+        overrides["cross_source.require_agreement"] = False
     if args.demote_uncertain:
-        global DEMOTE_UNCERTAIN_TO_NORMAL
-        DEMOTE_UNCERTAIN_TO_NORMAL = True
+        overrides["gates.demote_uncertain_to_normal"] = True
+    if args.keep_excluded_maxilla:
+        overrides["maxilla_fov.drop_excluded"] = False
+    if args.drop_excluded_maxilla_teeth:
+        overrides["maxilla_fov.drop_excluded_teeth"] = True
+    if args.force_maxilla_excluded_prefixes is not None:
+        overrides["maxilla_fov.force_excluded_prefixes"] =             list(args.force_maxilla_excluded_prefixes)
+    if args.wisdom_eruption_fallback:
+        overrides["extraction.wisdom_eruption_fallback"] = True
+
+    try:
+        settings = rules_config.load_and_apply(args.config, overrides)
+    except rules_config.ConfigError as exc:
+        ap.error(str(exc))
+
+    if args.print_config:
+        if args.config:
+            print(f"# {args.config}")
+        print(rules_config.describe(settings))
+        drift = rules_config.verify_defaults()
+        if drift:
+            print()
+            print("[FAIL] rules_config.DEFAULTS have drifted from the module "
+                  "constants -- a run with no --config and a run with "
+                  "default.yaml would now differ:")
+            for d in drift:
+                print(f"  {d}")
+            raise SystemExit(1)
+        return
 
     pred_path = Path(args.pred_dir)
     if pred_path.is_file():
@@ -3585,13 +3665,13 @@ def main():
         pred = json.loads(pf.read_text(encoding="utf-8"))
         summary = postprocess_prediction(
             pred, schema_path=args.schema,
-            wisdom_eruption_fallback=args.wisdom_eruption_fallback,
-            # None when neither flag is given -- so the module-level
-            # REQUIRE_CROSS_SOURCE_AGREEMENT (now False) stays the single
-            # default and nothing has to restate it in two places.
-            cross_validate=(True if args.cross_validate
-                            else False if args.no_cross_validate else None),
-            drop_excluded=not args.keep_excluded_maxilla,
+            # Every one of these is now None on purpose: the configuration has
+            # already been applied to the module globals above, and None is
+            # what tells postprocess_prediction to read them. Passing the
+            # argparse values here as well would silently outrank --config.
+            wisdom_eruption_fallback=None,
+            cross_validate=None,
+            drop_excluded=None,
             facts=source_rules.load_facts(
                 args.facts_dir, pred.get("case_id", pf.stem.replace("_pred", ""))))
         case_id = pred.get("case_id", pf.stem.replace("_pred", ""))
