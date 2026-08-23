@@ -2,7 +2,7 @@
 """
 sft_collator.py -- an SFT row -> input_ids, per-token labels, per-token weights.
 
-docs/vision_sft_plan_stale.md open item 9. Everything §3 produces is a FIELD-level
+docs/vision_sft_plan.md open item 9. Everything §3 produces is a FIELD-level
 decision; this is what turns it into `-100` spans and a weight vector, which is
 the only place those decisions become gradient.
 
@@ -16,7 +16,7 @@ WHAT CARRIES LOSS, AND WHAT DOES NOT
 Only the VALUES of supervised fields. Not the braces, not the field names, not
 the commas, not the closing `<|im_end|>`.
 
-That is a deliberate boundary and it follows from §3.3's arithmetic. The
+That is a deliberate boundary and it follows from the arithmetic in code/train/visual_evidence/README.md. The
 evidence weight of 0.04 was set against "~230 prose tokens per row against ~10
 tokens of supervised decision content" -- and ~10 is what the VALUES of ~8.3
 supervised fields per row (15,407 slots / 1,850 rows) tokenize to when they are
@@ -33,13 +33,17 @@ learned, and teaching it again here would spend gradient -- most of it on arm
 THE TWO WEIGHTS
 ───────────────
   1.00  a supervised decision field's value
-  0.04  a supervised `visual_evidence` string (§3.3, --evidence-weight)
+  0.04  a supervised `visual_evidence` string (code/train/visual_evidence/README.md, --evidence-weight)
   0     everything else, and those positions are `-100` as well
 
-Evidence prose that failed the perceivability screen is still IN the target --
-build_sft_targets.py keeps it there on purpose, so the decision fields are
-conditioned on it exactly as they will be at inference -- it simply arrives
-here with `mask[fact][visual_evidence] == "evidence"` and carries nothing.
+Anything at weight 0 is still IN the target -- the span is tokenized and the
+fields after it are conditioned on it exactly as at inference; it simply
+arrives with `mask[fact][visual_evidence] == "evidence"` and carries nothing.
+Which is why the CONTENT of that field is decided in build_sft_targets.py and
+not here, and why it has to be uniform across tooth and arch rows: see the
+`evidence` entry of its mask table. The rows this repo builds carry an empty
+string in every one, so the 0.04 row above is currently unreachable -- it
+applies again the moment --evidence-from supplies prose.
 """
 
 from __future__ import annotations
@@ -115,7 +119,7 @@ def serialize_target(target: dict, mask: dict, indent: int = 2
 class TooLong(ValueError):
     """The call does not fit --max-length. Dropped and counted, never truncated.
 
-    §4.4: a truncated call loses the tail of its target -- and with the fields
+    §4: a truncated call loses the tail of its target -- and with the fields
     emitted in schema order, the tail is the fields the schema put last. It
     would train a systematically incomplete answer.
     """
@@ -220,12 +224,12 @@ class ToothCallCollator:
     def __call__(self, rows: list[dict]) -> dict:
         """Batch size 1, asserted rather than assumed.
 
-        §4.4 sets batch_size=1 / grad_accum=16, and the alignment below depends
+        §4 sets batch_size=1 / grad_accum=16, and the alignment below depends
         on it: `logits_to_keep` is an int count of TRAILING positions, so it is
         only the target span when the target is at the end of the sequence --
         true for one row, false for any padded batch. Samples here are uniform
         at ~6.2k tokens, so batching buys nothing that grad accumulation does
-        not, and the memory term that actually binds is the logits (§4.4), which
+        not, and the memory term that actually binds is the logits (§4), which
         batching makes worse.
         """
         if len(rows) != 1:
@@ -246,7 +250,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rows", type=Path,
-                    default=ROOT / "outputs/training_results/vsft_pool_training/sft_wide.jsonl")
+                    default=ROOT / "outputs/training_results/vsft_pool_training/sft_targets.jsonl")
     ap.add_argument("--model-dir", type=Path,
                     default=ROOT / "models/Qwen3.5-9B-AWQ")
     ap.add_argument("--limit", type=int, default=25)
@@ -306,7 +310,7 @@ def main() -> int:
         mass = args.evidence_weight * ratio
         print(f"[INFO] evidence:decision token ratio {ratio:.1f}:1 -> loss mass "
               f"{mass:.2f}:1 at w={args.evidence_weight:g} "
-              f"(§3.3 sized this at ~23:1 -> ~0.9:1)")
+              f"(the evidence README sized this at ~23:1 -> ~0.9:1)")
     return 0
 
 

@@ -2,7 +2,7 @@
 """
 build_sft_targets.py -- tooth-composite calls + generated GT -> SFT rows.
 
-docs/vision_sft_plan_stale.md §3. One row per tooth call: the exact prompt the pipeline
+docs/vision_sft_plan.md §3. One row per tooth call: the exact prompt the pipeline
 would send, the answer the reference reports support, and a per-field decision
 about which of those fields may contribute loss.
 
@@ -47,15 +47,32 @@ swallows a field can be seen rather than inferred.
               and not a reason to drop a field. They stay in the OUTPUT SHAPE
               so the decoded object is still schema-valid; they just carry no
               gradient.
-  evidence    visual_evidence that the STUDENT could not confirm, plus every
-              empty string. §3.3: the prose comes from a teacher shown the
-              image and the already-established answer, so it is supervised
-              only where check_evidence_perceivable.py kept it -- training the
-              model to name cues it cannot resolve would manufacture the
-              over-calling the experiment exists to remove. Prose that fails
-              the screen STAYS in the target, so the decision fields are
-              conditioned on it exactly as at inference; it just carries no
-              gradient. --evidence-weight 0 masks all of it.
+  evidence    every empty visual_evidence string, plus any the STUDENT could
+              not confirm. Prose arrives only via --evidence-from -- a teacher
+              shown the image and the already-established answer -- and code/train/visual_evidence/README.md
+              supervises it only where check_evidence_perceivable.py kept it,
+              since training the model to name cues it cannot resolve would
+              manufacture the over-calling the experiment exists to remove.
+
+              THE FIELD IS FIRST IN EVERY FACT, by the schema's own ordering,
+              so whatever stands here conditions every supervised decision
+              after it whether or not it carries gradient. That makes this a
+              structural choice, not a loss one, and it has to be the SAME for
+              the tooth calls and the nine `global` ones. It was not: arm 6
+              supervised 20,878 tooth strings, left 9,572 more empty, and gave
+              all 13,346 arch strings "" because the teacher pass was written
+              for teeth alone -- three conditioning regimes reported as one
+              number. The rows built here now carry "" throughout, all 47,763
+              of them, which is also why --evidence-weight has nothing left to
+              weight.
+
+              One thing the flag does not do, and that went unnoticed through
+              arm 6: pointing --evidence-from at a SCREENED directory does not
+              keep failed prose in the target and merely unsupervise it. The
+              screen's filtered copy has already dropped those strings, so
+              they arrive here empty and are masked for that reason instead.
+              Conditioning on prose the screen rejected means passing the raw
+              draft dir.
   capped      §3.5's 6:1 rule. A supervised boolean whose negatives outnumber
               its positives by more than --neg-cap has the surplus negatives
               masked, seeded, down to that ratio -- because a ~92%-negative
@@ -215,7 +232,7 @@ def arch_of(fdi: int) -> str:
 #    operating-point shift produced on purpose. Refused outright, on the same
 #    grounds as DEFAULT_REFUSED.
 #
-#    THAT REASONING IS HALF RIGHT, AND ARM 5 MEASURED THE OTHER HALF (§8.2).
+#    THAT REASONING IS HALF RIGHT, AND ARM 5 MEASURED THE OTHER HALF (plan log, 'Arm 5 -> arm 6').
 #    Refusing a constant does not leave it alone; it leaves it WITHOUT A
 #    GRADIENT. Arm 5 trained with both sinus `scope` fields refused and the
 #    baseline's 15/38 `fully_included` became 38/38 -- the one answer that is
@@ -385,7 +402,7 @@ def build_row(case_id: str, fdi: int, call: dict, gt_teeth: dict,
 
             if field == EVIDENCE_FIELD:
                 # Supervised where the STUDENT confirmed the teacher's prose,
-                # masked where it did not. §3.3: the point of training on the
+                # masked where it did not. The point of training on the
                 # rationale is that the model learns to look before it answers,
                 # and the point of NOT training on unconfirmed prose is that
                 # teaching it to name cues it cannot resolve is manufacturing
@@ -534,7 +551,7 @@ def main() -> int:
                          "cases, 0.3%% of the corpus.")
     ap.add_argument("--evidence-from", type=Path,
                     help="a predictions/ dir whose visual_evidence strings become "
-                         "the target text (§3.3). Without it every evidence "
+                         "the target text (see code/train/visual_evidence/README.md). Without it every evidence "
                          "string is empty, which is a DIFFERENT experiment -- "
                          "see --allow-empty-evidence.")
     ap.add_argument("--allow-empty-evidence", action="store_true",
@@ -556,7 +573,7 @@ def main() -> int:
                          "positives, per field. 0 disables.")
     ap.add_argument("--seed", type=int, default=42,
                     help="which negatives get masked -- must match across arms")
-    # §3.3. 0 keeps the prose in the target for conditioning but out of the
+    # Evidence README. 0 keeps the prose in the target for conditioning but out of the
     # loss. Above 0 it is supervised WHERE THE SCREEN KEPT IT -- pass
     # --evidence-from a screened dir, or this trains on unverified prose.
     #
@@ -581,7 +598,7 @@ def main() -> int:
     if args.include_arch:
         freed = set(ARCH_REFUSED) & set(args.supervise)
         print(f"[INFO] refused arch fields: {sorted(arch_refused) or 'none'}"
-              + (f" -- SUPERVISING {sorted(freed)} (§8.2: a refused constant "
+              + (f" -- SUPERVISING {sorted(freed)} (plan log: a refused constant "
                  f"drifts, it does not stay put)" if freed else ""))
     print(f"[INFO] visual_evidence weight {args.evidence_weight:g}"
           + (" (masked)" if args.evidence_weight <= 0 else
@@ -604,7 +621,7 @@ def main() -> int:
 
     # The payload must have been built from THIS schema. Content hash, not
     # mtime: every file under code/ and schema/ carries an mtime from a
-    # checkout with no content change (plan §5.3).
+    # checkout with no content change (plan §6).
     pin = args.qa_jsonl.parent / "SCHEMA.sha256"
     if pin.exists():
         want = pin.read_text(encoding="utf-8").split()[0]
@@ -618,7 +635,7 @@ def main() -> int:
               f"agreement is unverified")
 
     if not args.evidence_from and not args.allow_empty_evidence:
-        sys.exit("[FAIL] --evidence-from is required (§3.3): the target's "
+        sys.exit("[FAIL] --evidence-from is required (see the evidence README): the target's "
                  "visual_evidence must be TEACHER prose -- a model shown the "
                  "image and the already-established answer, told not to "
                  "re-judge it, as draft_evidence.py does. The generated GT "
@@ -682,7 +699,7 @@ def main() -> int:
 
         if args.include_arch:
             # Evidence is deliberately NOT passed: the teacher/screen chain of
-            # §3.3 was run for dental_elements only, and an unscreened teacher
+            # the teacher/screen chain was run for dental_elements only, and an unscreened teacher
             # string is the "confident prose about something it cannot see"
             # failure the screen exists to catch. Arch rows carry
             # visual_evidence masked; at weight 0.04 that costs almost nothing.

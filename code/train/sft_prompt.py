@@ -2,7 +2,7 @@
 """
 sft_prompt.py -- one SFT row -> the exact messages the pipeline would send.
 
-docs/vision_sft_plan_stale.md §3.4. This is the ONLY place that turns a row of
+docs/vision_sft_plan.md §3.4. This is the ONLY place that turns a row of
 `sft_*.jsonl` into a chat conversation, and both sides of the experiment go
 through it: check_prompt_parity.py compares its output against vLLM's own
 tokenizer, and trainer.py's collator builds its training text from
@@ -21,7 +21,7 @@ TWO THINGS IT DOES THAT THE PIPELINE DOES NOT, BOTH DELIBERATE
    resolves on the host and at /project inside the container, and
    build_captioned_image_blocks() resolves them against `os.getcwd()`. That is
    correct for the pipeline, which runs from the project dir; it is a trap for
-   anything else, and §3.3 records what the trap cost -- a teacher job with no
+   anything else, and the plan's log records what the trap cost -- a teacher job with no
    working directory drafted 9,301 evidence strings having never loaded an
    image, because the resolver SILENTLY DROPS what it cannot find.
 
@@ -80,10 +80,10 @@ ENABLE_THINKING = False
 # that is a deliberate decision (2026-08-14). The alternative -- serving with
 # --chat-template-content-format openai -- restores the intended interleave,
 # but it changes the prompt every run in this repo has been sent, so it
-# invalidates the §5.0 baseline and every arm scored against it. Training
+# invalidates the §5 baseline and every arm scored against it. Training
 # against the prompt the model will actually receive costs nothing and keeps
 # the whole result history comparable; making the caption-first design real is
-# a separate, measured experiment (§1's rule for the prefill reorder).
+# a separate, measured experiment (the plan's log, 'The image is hoisted').
 #
 # When that experiment is run, flip this to "openai" and re-baseline. Nothing
 # else in the training path needs to know.

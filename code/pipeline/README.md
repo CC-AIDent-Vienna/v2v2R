@@ -248,7 +248,7 @@ avoid a conflict that only shows up at runtime, each half gets its own venv:
 # segmentation
 RUN python3 -m venv /opt/seg   && /opt/seg/bin/pip   install -r seg_requirements.txt
 # VQA + vLLM
-RUN python3 -m venv /opt/vqa   && /opt/vqa/bin/pip   install -r env/competition_requirements.txt
+RUN python3 -m venv /opt/vqa   && /opt/vqa/bin/pip   install -r vqa_requirements.txt
 ```
 
 Each step is then run with its own interpreter (`/opt/seg/bin/python …`,

@@ -4,25 +4,24 @@
 #
 # WHY THIS EXISTS
 # ---------------
-# scripts/evaluation.sh with JUDGE_BACKEND=vllm starts its own vLLM, evaluates,
-# then kills it -- so every evaluation pays the 15-25 min model load. This
-# script does ONLY the serving half. Start it once, then run
-# scripts/eval_now.sh as many times as you like against it; each run costs just
-# the RadFact calls.
+# A judge that starts its own vLLM, evaluates and then kills it pays the 15-25
+# min model load on EVERY evaluation. This script does ONLY the serving half.
+# Start it once, then run scripts/run_eval.sh as many times as you like against
+# it; each run costs just the RadFact calls.
 #
 # THE ONE THING THAT TRIPS PEOPLE UP
 # -----------------------------------
 # The server runs on a GPU COMPUTE node (s0-n0x), not on the login node where
 # you run the evaluation. So http://localhost:8001 will NOT reach it -- the
 # client has to use this node's hostname. That is exactly what
-# scripts/eval_now.sh resolves for you, and this script prints the ready-to-paste
+# scripts/run_eval.sh resolves for you, and this script prints the ready-to-paste
 # URL into its log.
 #
 # Usage:
 #   sbatch --partition=gpu --qos=a100 --gres=gpu:a100:1 scripts/judge_server.sh
 #
 #   # then, from the login node, any number of times:
-#   scripts/eval_now.sh validate outputs/<arm>/synthesized_reports
+#   scripts/run_eval.sh outputs/<arm>_validate
 #
 #   # when finished (it does NOT stop by itself before --time):
 #   scancel -n judge
@@ -89,7 +88,7 @@ echo ""
 # The URL the CLIENT must use -- not localhost, this node.
 JUDGE_URL="http://${NODE}:${PORT}/v1"
 
-# Advertise the address so eval_now.sh (and you) can find it without parsing
+# Advertise the address so run_eval.sh (and you) can find it without parsing
 # squeue. Written before the server is up; the readiness marker is separate.
 mkdir -p "$PROJECT_DIR/.judge"
 printf '%s\n' "$JUDGE_URL" > "$PROJECT_DIR/.judge/url"
@@ -128,7 +127,7 @@ for i in $(seq 1 180); do          # 180 x 10s = 30 min
         echo "[PASS] Judge ready after $((i * 10))s"
         echo "============================================================"
         echo "  Evaluate now, from the LOGIN node:"
-        echo "    scripts/eval_now.sh validate outputs/<arm>/synthesized_reports"
+        echo "    scripts/run_eval.sh outputs/<arm>_validate"
         echo ""
         echo "  Or point any client at:"
         echo "    --judge-backend vllm --vllm-url $JUDGE_URL --model $SERVED_NAME"

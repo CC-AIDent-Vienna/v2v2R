@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-check_prompt_parity.py -- docs/vision_sft_plan_stale.md §3.4's acceptance test.
+check_prompt_parity.py -- docs/vision_sft_plan.md §3.4's acceptance test.
 
 Render one tooth call through the TRAINING path and through the SERVING path
 and require identical token ids. A token-id diff, not a text diff: the failures
@@ -11,7 +11,7 @@ WHY THIS RUNS BEFORE ANY TRAINING
 ─────────────────────────────────
 It costs a server rather than a GPU-hour, and every hour spent after it is
 spent on the assumption it verifies: that the prompt the collator builds is the
-prompt the server sends. §3.3 is the argument. A job with no working directory
+prompt the server sends. The plan's log entry 'The teacher pass that never saw an image' is the argument. A job with no working directory
 resolved every image path to nothing, `build_captioned_image_blocks` silently
 skipped what it could not find, and a teacher wrote 9,301 fluent strings having
 never seen an image -- and nothing downstream could tell, because a prompt that
@@ -166,7 +166,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rows", type=Path,
-                    default=ROOT / "outputs/training_results/vsft_pool_training/sft_wide.jsonl")
+                    default=ROOT / "outputs/training_results/vsft_pool_training/sft_targets.jsonl")
     ap.add_argument("--model-dir", type=Path,
                     default=ROOT / "models/Qwen3.5-9B-AWQ")
     ap.add_argument("--fdi", type=int, default=46,

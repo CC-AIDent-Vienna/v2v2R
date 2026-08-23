@@ -19,9 +19,8 @@
 # would have produced itself. It also writes qa_pairs.jsonl (step 5), so what
 # follows on the GPU is inference and nothing else:
 #
-#   sbatch scripts/gen_images_cpu.sh validate   # now, on the short cpu queue
-#   QA_JSONL=$PWD/outputs/<run>_validate/qa_pairs.jsonl \
-#       sbatch scripts/pool_infer.sh                 # later; the GPU step alone
+#   sbatch scripts/gen_images_cpu.sh validate     # now, on the short cpu queue
+#   STAGE=infer sbatch scripts/run_infer.sh validate  # later; the GPU step alone
 #
 # A batch driver that renders as well can be queued at the same time -- it
 # re-checks each completion signal per case, so whatever this job has finished
@@ -138,7 +137,7 @@ WORKERS="${WORKERS:-4}"
 # schema asks for every image and build_vqa_pairs.py drops a call whose images
 # are missing, so a partial images dir silently produces a smaller payload.
 #
-# STEPS=tooth exists for docs/vision_sft_plan_stale.md, whose scope (§1) is the per-tooth
+# STEPS=tooth exists for docs/vision_sft_plan.md, whose target (§3.0) is the per-tooth
 # composite call alone. Training targets are built from the tooth rows only, so
 # the other three generators would cost ~3.5 of every 4 minutes per case to
 # render images nothing in that experiment reads. On the 144-case SFT pool that
@@ -537,9 +536,7 @@ export NO_FACTS STATUS_DIR
     echo "[INFO] Sinus detail    : $n_sinus image(s) (up to 2/case)"
     echo ""
     echo "[INFO] Next -- images and qa_pairs.jsonl are done; the GPU step is inference:"
-    echo "  QWEN_MODEL_NAME=<served-model-name> RUN_NAME=${RUN_NAME}_${SPLIT} \\"
-    echo "    QA_JSONL=$OUT_DIR/qa_pairs.jsonl \\"
-    echo "    GT_DIR=\$PWD/dataset/$SPLIT/outputs/ground_truth \\"
-    echo "    sbatch scripts/pool_infer.sh"
+    echo "  STAGE=infer MODEL_NAME=<served-model-name> RUN_NAME=${RUN_NAME} \\"
+    echo "    sbatch scripts/run_infer.sh $SPLIT"
 
 } 2>&1

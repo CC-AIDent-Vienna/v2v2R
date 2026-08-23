@@ -34,8 +34,8 @@ notes: >-
 # vote between every read that can assert it. Worth +0.06 official together.
 #
 # ALL OF THEM ARE NO-OPS WITHOUT --facts-dir. Turning a rule off here is not
-# the same ablation as dropping --facts-dir (NO_SOURCE_RULES=1), which also
-# takes away the maxilla-FOV override -- see no_source_rules.yaml.
+# the same ablation as dropping --facts-dir (NO_FACTS=1), which also takes
+# away the maxilla-FOV override -- see no_source_rules.yaml.
 source_rules:
   absent_teeth:   true    # facts.teeth_absent, gated on fov.maxilla == excluded
   impaction:      true    # re-derived from eruption_state + orientation; 0.52 -> 0.75 F1

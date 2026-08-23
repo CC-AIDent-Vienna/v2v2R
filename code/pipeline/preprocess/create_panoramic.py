@@ -1211,7 +1211,7 @@ def apply_overlay(pano_rgb, label_pano, draw_outline=True, outline_width=None,
         busiest = max(max(per_band), 1)
         # ~2 digits at 0.6 em each, plus an em of breathing room between tags.
         width_cap = int(n_pts / (busiest * 2.2))
-        font_size = int(np.clip(round(n_z * 0.030), 11, max(11, width_cap)))
+        font_size = int(np.clip(round(n_z * 0.050), 16, max(16, width_cap)))
     fsize = int(max(9, font_size))
     if outline_width is None:
         outline_width = max(2, int(round(n_z / 350.0)))
@@ -1221,7 +1221,11 @@ def apply_overlay(pano_rgb, label_pano, draw_outline=True, outline_width=None,
     cw    = fsize * 6 // 10
 
     # ── Reserve ONE single-row blank margin above and below (root side) ───────
-    row_h    = fsize + 8                  # single row -- tags are horizontally aligned
+    # The band grows WITH the tag rather than by a fixed 8 px: the padding has
+    # to stay proportional or a larger tag ends up jammed against the image
+    # edge. Only the canvas height changes -- the panoramic body itself is
+    # untouched, so nothing about the rendered anatomy or its scale moves.
+    row_h    = fsize + max(8, fsize // 2)  # single row -- tags are horizontally aligned
     canvas_h = n_z + 2 * row_h
     arr      = np.zeros((canvas_h, n_pts, 3), dtype=np.uint8)
     arr[row_h:row_h + n_z, :, :] = np.array(pano_rgb, dtype=np.uint8)

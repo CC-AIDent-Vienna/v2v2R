@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Merge a vision LoRA adapter into the AWQ checkpoint, at the tensor level.
 
-`docs/vision_sft_plan_light.md` §3 and §4.3. The arm is trained against bf16
+`docs/vision_sft_plan.md` §3 and its log entry 'AWQ quantizes almost nothing'. The arm is trained against bf16
 `models/Qwen3.5-9B` and served from `models/Qwen3.5-9B-AWQ`, and this is the
 script that makes those the same model.
 
@@ -419,7 +419,7 @@ def merge(args) -> int:
     # 2026-08-17 -- no --enable-lora / LoRARequest / load_adapter anywhere in
     # anywhere under code/, and arms 1, 2, 5 and 6 were all scored without it. Printing
     # a command that cannot be completed reads as a chore; printing the gap reads
-    # as what it is. See docs/vision_sft_plan_light.md §9.
+    # as what it is. See code/train/README.md.
     print("\n  NOT VERIFIED, AND NOT CURRENTLY VERIFIABLE: that this checkpoint "
           "behaves like\n  the adapter-applied model. Merge arithmetic is "
           "checked above; serving is not.\n\n"

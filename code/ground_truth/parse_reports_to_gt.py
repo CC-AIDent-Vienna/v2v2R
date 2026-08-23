@@ -1476,7 +1476,7 @@ def expand_arch(f: Dict, out: Dict) -> Dict:
         # ("none" if is_absent) over the arch extent that would otherwise
         # apply. `null` is this file's established word for "the reference
         # did not answer here": structured_findings_evaluation.py
-        # both drop null-GT pairs, so the metric and docs/vision_sft_plan_stale.md's
+        # both drop null-GT pairs, so the metric and docs/vision_sft_plan.md's
         # -100 loss mask end up reading one definition instead of two.
         #
         # What survives absence is what the report ASSERTED at that position

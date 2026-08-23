@@ -23,7 +23,7 @@ STAGE=post POSTPROCESS_CONFIG=configs/postprocess/no_source_rules.yaml \
 | file | what it is |
 |---|---|
 | `default.yaml` | **the main arm** — `aksssr_v7_trained_arm6`, Final 0.4658 / RadFact F1 0.5139 on validate-40. Every other file is a diff against this one. Do not edit it. |
-| `no_source_rules.yaml` | the eleven source rules off, facts file still read — isolates what §3 of `docs/postprocess.md` is worth |
+| `no_source_rules.yaml` | the eleven source rules off, facts file still read — isolates what the rules are worth — `docs/postprocess.md` §2.1, Table 2 |
 | `cross_validate.yaml` | the pre-2026-08-07 precision-gate arm: a finding two sources disagree about is dropped rather than reported |
 
 ## Writing a new arm
@@ -65,7 +65,7 @@ The sections:
 
 | section | what it controls |
 |---|---|
-| `source_rules` | the eleven rules of `docs/postprocess.md` §3 — which SOURCE each finding comes from |
+| `source_rules` | the eleven rules of `docs/postprocess.md` §1 — which SOURCE each finding comes from |
 | `priors` | what is stated when no read settled the question (today: canal location) |
 | `cross_source` | the agreement gates — union vs. drop-on-disagreement |
 | `gates` | the standalone drop rules |

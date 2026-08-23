@@ -115,7 +115,7 @@ BINDINGS: Dict[str, _B] = {
     # ── the eleven source rules ────────────────────────────────────────────
     # Each re-sources ONE finding from the segmentation mask or from a single
     # image instead of voting between every read that can assert it. All are
-    # no-ops without --facts-dir. docs/postprocess.md §3.
+    # no-ops without --facts-dir. docs/postprocess.md §1, "The eleven rules".
     "source_rules.absent_teeth":    _B("source_rules.RULES[absent_teeth]",   doc="THE RULE -- absent teeth"),
     "source_rules.impaction":       _B("source_rules.RULES[impaction]",      doc="THE RULE -- impaction"),
     "source_rules.endodontic":      _B("source_rules.RULES[endodontic]",     doc="THE RULE -- endodontic treatment"),
@@ -177,7 +177,7 @@ BINDINGS: Dict[str, _B] = {
     # and no second source filters either); fillings is a switch because it is
     # only safe once THE RULE -- fillings has re-sourced the group.
     "report.render_fillings": _B("synthesize_report.RENDER_FILLINGS",
-                                 doc="§3 THE RULE -- fillings, §4 synthesize_report.py"),
+                                 doc="THE RULE -- fillings; §1 What reaches the report"),
 }
 
 

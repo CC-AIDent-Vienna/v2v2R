@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The LoRA arm table, and the assertion that a config actually hit its targets.
 
-Single source of truth for `docs/vision_sft_plan_stale.md` §2. `trainer.py`
+Single source of truth for `docs/vision_sft_plan.md` §2. `trainer.py`
 imports ARMS from here and calls assert_arm() before it touches a GPU, so the
 declared parameter count is checked in exactly one place.
 
@@ -139,7 +139,7 @@ def expected_params(arm: str, r: int | None = None) -> int:
 
 def lora_config(arm: str, r: int | None = None, alpha_mult: int = 2,
                 dropout: float = 0.05):
-    """The arm's LoraConfig. `lora_alpha = 2r` per §4.4, for every arm."""
+    """The arm's LoraConfig. `lora_alpha = 2r` per §4, for every arm."""
     from peft import LoraConfig
 
     spec = ARMS[arm]

@@ -20,15 +20,15 @@
 #
 # That split is the point. judge_server.sh holds the model on a GPU node and
 # advertises itself in .judge/{url,ready,jobid}; this script finds it and pays
-# no model load. Folding them into one job is what scripts/evaluation.sh did,
-# and it reloaded a 14B model on every evaluation -- 15 to 25 minutes to score
-# a run that takes seconds. eval.py discovers the judge in this order:
+# no model load. Folding them into one job -- which the evaluation script this
+# supersedes did -- reloads a 14B model on every evaluation, 15 to 25 minutes
+# to score a run that takes seconds. eval.py discovers the judge in this order:
 # --judge-url, then .judge/url, then `squeue -n judge`.
 #
-# ARGUMENT ORDER CHANGED FROM eval_now.sh
-# ---------------------------------------
-#   was:  scripts/eval_now.sh <training|validate> [synthesized_reports_dir]
-#   now:  scripts/run_eval.sh <run_dir> [training|validate]
+# ARGUMENT ORDER CHANGED FROM THE eval_now.sh THIS SUPERSEDES
+# ----------------------------------------------------------
+#   was:  <training|validate> [synthesized_reports_dir]
+#   now:  <run_dir> [training|validate]
 # One RUN dir, because both halves read the same run -- the ranking scores
 # <run_dir>/synthesized_reports, the survey reads <run_dir>/predictions and
 # summaries. Passing a reports dir and a split separately made it possible to
@@ -48,6 +48,16 @@
 # before a RadFact run that takes hours, while the fix is still cheap.
 # =============================================================================
 set -euo pipefail
+
+# Python writes stdout in 4 KB blocks when it is redirected to a file, which
+# for a 12 h job means [INFO] lines and Trainer metrics are invisible for hours
+# after they happen. Job 561429 lost its first eval_loss that way: the eval
+# demonstrably ran -- 478 s unaccounted against arm 6's 450 s eval_runtime --
+# and the line sat in the buffer while the run looked stalled at step 295.
+# vision_sft.sh, pool_infer.sh and draft_evidence.sh all carry this; the
+# run_*.sh entry points that superseded them did not.
+export PYTHONUNBUFFERED=1
+
 
 RUN_DIR="${1:?usage: scripts/run_eval.sh <run_dir> [training|validate]}"
 SPLIT="${2:-${SPLIT:-validate}}"

@@ -65,6 +65,16 @@
 
 set -euo pipefail
 
+# Python writes stdout in 4 KB blocks when it is redirected to a file, which
+# for a 12 h job means [INFO] lines and Trainer metrics are invisible for hours
+# after they happen. Job 561429 lost its first eval_loss that way: the eval
+# demonstrably ran -- 478 s unaccounted against arm 6's 450 s eval_runtime --
+# and the line sat in the buffer while the run looked stalled at step 295.
+# vision_sft.sh, pool_infer.sh and draft_evidence.sh all carry this; the
+# run_*.sh entry points that superseded them did not.
+export PYTHONUNBUFFERED=1
+
+
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
@@ -81,9 +91,33 @@ esac
 
 # Resolved by walking up for schema/schema.json, so this script does not care
 # how deep scripts/ sits.
-PROJECT_DIR="${PROJECT_DIR:-$(d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; \
-    while [ "$d" != "/" ] && [ ! -f "$d/schema/schema.json" ]; do d="$(dirname "$d")"; done; echo "$d")}"
-[ -f "$PROJECT_DIR/schema/schema.json" ] || { echo "[FAIL] no schema/schema.json above $0" >&2; exit 1; }
+# Repo root, by walking up for schema/schema.json. TWO starting points, and
+# the order matters: under `sbatch` SLURM copies this file to
+# /var/spool/slurmd/job*/slurm_script, so $BASH_SOURCE walks up out of the
+# SPOOL directory and finds nothing. $SLURM_SUBMIT_DIR is where sbatch was
+# run and is set only under SLURM, so it is tried first there and is absent
+# everywhere else. Job 561426 died on this four seconds in, holding an a100 --
+# and all three `run_*.sh` entry points had the same defect, because the
+# restructure only ever exercised them by path on the login node.
+_find_root() {
+    local d
+    for d in "$@"; do
+        [ -n "$d" ] || continue
+        d="$(cd "$d" 2>/dev/null && pwd)" || continue
+        while [ "$d" != "/" ]; do
+            [ -f "$d/schema/schema.json" ] && { echo "$d"; return 0; }
+            d="$(dirname "$d")"
+        done
+    done
+    return 1
+}
+# `|| true`, or `set -e` kills the assignment on a failed search and the guard
+# below never gets to say why.
+PROJECT_DIR="${PROJECT_DIR:-$(_find_root "${SLURM_SUBMIT_DIR:-}" \
+                                         "$(dirname "${BASH_SOURCE[0]}")" || true)}"
+[ -f "${PROJECT_DIR:-}/schema/schema.json" ] || {
+    echo "[FAIL] no schema/schema.json above ${SLURM_SUBMIT_DIR:-<unset>} or $0" >&2
+    echo "[HINT] set PROJECT_DIR=/path/to/project_ToothFairy4" >&2; exit 1; }
 
 CONTAINER="${CONTAINER:-${SIF_PATH:-$HOME/containers/extraction.sqsh}}"
 MODEL_DIR="${MODEL_DIR:-$PROJECT_DIR/models}"

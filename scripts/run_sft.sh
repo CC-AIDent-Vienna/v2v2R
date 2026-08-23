@@ -3,17 +3,19 @@
 # scripts/run_sft.sh -- the LoRA SFT pipeline, one stage per submission.
 #
 #   STAGE=pool                 scripts/run_sft.sh          # CPU, login node
-#   STAGE=draft   sbatch ...   scripts/run_sft.sh          # teacher    [GPU]
-#   STAGE=screen  sbatch ...   scripts/run_sft.sh          # student    [GPU]
 #   STAGE=targets              scripts/run_sft.sh          # CPU, the long pole
 #   STAGE=parity  sbatch ...   scripts/run_sft.sh          # student    [GPU]
 #   STAGE=train   sbatch ...   scripts/run_sft.sh          # the arm    [GPU]
 #   STAGE=merge   sbatch ...   scripts/run_sft.sh          # CPU is fine
 #
+# STAGE=draft and STAGE=screen are the visual-evidence pass. They exist only
+# where code/train/visual_evidence/ does -- a research side arm, not part of
+# the arm-6 path. See that directory's README.
+#
 # Everything after `--` goes to the stage's module verbatim:
 #
-#   STAGE=train ARM=vision+merger sbatch --partition=gpu --qos=a100 \
-#       --gres=gpu:a100:1 scripts/run_sft.sh -- --rows sft_wide.jsonl --epochs 2
+#   STAGE=train sbatch --partition=gpu --qos=a100 --gres=gpu:a100:1 \
+#       scripts/run_sft.sh -- --arm vision+merger --epochs 2
 #
 # THIS FILE IS DELIBERATELY THIN
 # ------------------------------
@@ -26,7 +28,8 @@
 # ---------------------------------------------------
 #   base        nibabel / PIL / the schema tooling      pool, targets
 #   container   vLLM -- exists nowhere else             draft, screen (server
-#                                                       AND client)
+#                                                       AND client; research
+#                                                       repo only)
 #   SFT_PY      torch 2.11 / transformers 5.9           parity, train, merge
 #
 # vLLM 0.19.0 pins torch==2.10.0 and transformers<5 while training needs 2.11.0
@@ -56,14 +59,48 @@ set -euo pipefail
 
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 
-STAGE="${STAGE:?set STAGE=pool|targets|draft|screen|parity|train|merge}"
-case "$STAGE" in pool|targets|draft|screen|parity|train|merge) ;; *)
-    echo "[FAIL] unknown STAGE=$STAGE" >&2; exit 1 ;;
-esac
+# Python writes stdout in 4 KB blocks when it is redirected to a file, which
+# for a 12 h job means [INFO] lines and Trainer metrics are invisible for hours
+# after they happen. Job 561429 lost its first eval_loss that way: the eval
+# demonstrably ran -- 478 s unaccounted against arm 6's 450 s eval_runtime --
+# and the line sat in the buffer while the run looked stalled at step 295.
+# vision_sft.sh, pool_infer.sh and draft_evidence.sh all carry this; the
+# run_*.sh entry points that superseded them did not.
+export PYTHONUNBUFFERED=1
 
-PROJECT_DIR="${PROJECT_DIR:-$(d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; \
-    while [ "$d" != "/" ] && [ ! -f "$d/schema/schema.json" ]; do d="$(dirname "$d")"; done; echo "$d")}"
-[ -f "$PROJECT_DIR/schema/schema.json" ] || { echo "[FAIL] no schema/schema.json above $0" >&2; exit 1; }
+
+# Not validated here. code/train/sft.py owns the stage table -- it is what
+# knows which optional stages this checkout registers -- and its argparse
+# `choices` rejects the rest with the real list.
+STAGE="${STAGE:?set STAGE=pool|targets|parity|train|merge}"
+
+# Repo root, by walking up for schema/schema.json. TWO starting points, and
+# the order matters: under `sbatch` SLURM copies this file to
+# /var/spool/slurmd/job*/slurm_script, so $BASH_SOURCE walks up out of the
+# SPOOL directory and finds nothing. $SLURM_SUBMIT_DIR is where sbatch was
+# run and is set only under SLURM, so it is tried first there and is absent
+# everywhere else. Job 561426 died on this four seconds in, holding an a100 --
+# and all three `run_*.sh` entry points had the same defect, because the
+# restructure only ever exercised them by path on the login node.
+_find_root() {
+    local d
+    for d in "$@"; do
+        [ -n "$d" ] || continue
+        d="$(cd "$d" 2>/dev/null && pwd)" || continue
+        while [ "$d" != "/" ]; do
+            [ -f "$d/schema/schema.json" ] && { echo "$d"; return 0; }
+            d="$(dirname "$d")"
+        done
+    done
+    return 1
+}
+# `|| true`, or `set -e` kills the assignment on a failed search and the guard
+# below never gets to say why.
+PROJECT_DIR="${PROJECT_DIR:-$(_find_root "${SLURM_SUBMIT_DIR:-}" \
+                                         "$(dirname "${BASH_SOURCE[0]}")" || true)}"
+[ -f "${PROJECT_DIR:-}/schema/schema.json" ] || {
+    echo "[FAIL] no schema/schema.json above ${SLURM_SUBMIT_DIR:-<unset>} or $0" >&2
+    echo "[HINT] set PROJECT_DIR=/path/to/project_ToothFairy4" >&2; exit 1; }
 
 ARGS=(--stage "$STAGE" --project-dir "$PROJECT_DIR"
       --model-dir "${MODEL_DIR:-$PROJECT_DIR/models}"

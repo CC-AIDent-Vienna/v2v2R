@@ -37,6 +37,10 @@ GROUPS = (
     "ground_truth/audit_gt",
     "eval",
     "train",
+    # The visual-evidence pass: a research-only side arm, kept out of the
+    # released subset. Its own group so make_release.py's closure does not
+    # reach it and code/train/ reads as the arm-6 path alone.
+    "train/visual_evidence",
     "arms",
     "studies",
     "data",

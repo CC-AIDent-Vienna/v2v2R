@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-trainer.py -- the arms of docs/vision_sft_plan_stale.md §2, trained.
+trainer.py -- the arms of docs/vision_sft_plan.md §2, trained.
 
-    python code/train/trainer.py --arm vision+merger --rows sft_wide.jsonl \\
+    python code/train/trainer.py --arm vision+merger --rows sft_targets.jsonl \\
         --out outputs/vsft_arm2 --epochs 2
 
 Four things this file is responsible for, and three of them are refusals:
@@ -15,7 +15,7 @@ Four things this file is responsible for, and three of them are refusals:
      parameters and that contrast IS the experiment, so an unnoticed extra
      block is as damaging as an empty adapter.
   2. **It refuses to truncate.** A call over --max-length is dropped and
-     counted (§4.4). Truncation removes the END of the target, and the target
+     counted (§4). Truncation removes the END of the target, and the target
      is emitted in schema order, so it would train a systematically incomplete
      answer.
   3. **It refuses to train a base whose gradients do not reach the arm.** With
@@ -29,7 +29,7 @@ WHY THE LOSS IS NOT THE MODEL'S OWN
 ───────────────────────────────────
 Passing `labels=` to forward() computes cross-entropy over EVERY position
 against a 248,320-token vocabulary: 6,700 x 248,320 logits, ~9 GB with the
-fp32 upcast and its gradient, which is what OOMs a 40 GB card (§4.4) -- the
+fp32 upcast and its gradient, which is what OOMs a 40 GB card (the plan's memory-budget log entry) -- the
 weights are not the problem, the logits are.
 
 Every supervised position is in the target span at the END of the sequence, so
@@ -38,7 +38,7 @@ logits tensor becomes ~600 x 248,320, about 0.9 GB. That is the difference
 between fitting one A100 and not.
 
 It also lets the per-token weights of sft_collator.py apply at all: HF's
-built-in loss is a plain mean over non-ignored positions, and §3.3's 0.04
+built-in loss is a plain mean over non-ignored positions, and the evidence README's 0.04
 evidence weight cannot be expressed that way.
 """
 
@@ -203,7 +203,7 @@ def awq_config_for_transformers(model_dir: Path, backend: str = "auto_trainable"
     them wrong; wrapped, exactly the 93 the checkpoint stores 4-bit, with no
     error in either direction. Those 93 are all `mlp.{down,up,gate}_proj` in
     layers 1-31 -- and NO arm targets one of them, which is why the arms train
-    unquantized tensors and merge back bit-exactly (§4.3).
+    unquantized tensors and merge back bit-exactly (plan log, 'AWQ quantizes almost nothing').
     """
     from transformers import AutoConfig
 
@@ -236,7 +236,7 @@ def main() -> int:
                     help="override the arm's rank (the expected parameter "
                          "count scales with it; the assertion still holds)")
     ap.add_argument("--rows", type=Path,
-                    default=ROOT / "outputs/training_results/vsft_pool_training/sft_wide.jsonl")
+                    default=ROOT / "outputs/training_results/vsft_pool_training/sft_targets.jsonl")
     ap.add_argument("--case-list", type=Path,
                     help="restrict to these cases -- "
                          "outputs/training_results/sft_pool/narrow.txt for "
@@ -258,6 +258,13 @@ def main() -> int:
     ap.add_argument("--warmup-ratio", type=float, default=0.03)
     ap.add_argument("--max-length", type=int, default=8192)
     ap.add_argument("--evidence-weight", type=float, default=0.04)
+    ap.add_argument("--eval-case-list", type=Path,
+                    help="watch eval loss on THESE cases -- normally "
+                         "sft_pool/heldout.txt, the same 24 the arms are "
+                         "compared on afterwards. Their rows are read straight "
+                         "from --rows, bypassing --case-list, so the 30 cases "
+                         "--eval-cases would otherwise reserve stay in "
+                         "training. Mutually exclusive with --eval-cases.")
     ap.add_argument("--eval-cases", type=int, default=0,
                     help="hold N cases out of the ROWS as an eval split and "
                          "report eval loss twice an epoch. 0 (default) trains "
@@ -299,9 +306,9 @@ def main() -> int:
                  f"rows: {sorted(leaked)[:8]}")
     print(f"[PASS] §0: no validate case in the pool ({len(forbidden)} checked)")
 
-    # §0b -- the held-out SCORING cases, which §0 above does not cover and by
-    # construction cannot: they are training-split cases, so nothing about them
-    # looks forbidden. outputs/training_results/sft_pool/heldout.txt is the set
+    # §0's SECOND bullet -- the held-out scoring cases, which the check above
+    # does not cover and by construction cannot: they are training-split cases,
+    # so nothing about them looks forbidden. outputs/training_results/sft_pool/heldout.txt is the set
     # every arm is measured on (arm 1's 171-claims number, arm 2's, and whatever
     # arm 5 returns), and all 24 of them are inside all_582.txt. Train on the full
     # pool and 18 of them arrive with drafted evidence -- the arm is then
@@ -323,11 +330,11 @@ def main() -> int:
                    or ROOT / "outputs/training_results/sft_pool/heldout.txt")
     if not ho_file.exists():
         if not os.environ.get("ALLOW_HELDOUT"):
-            sys.exit(f"[FAIL] §0b: {ho_file} not found -- cannot prove the "
+            sys.exit(f"[FAIL] §0 held-out: {ho_file} not found -- cannot prove the "
                      f"held-out scoring cases stayed out of training. Point "
                      f"HELDOUT_FILE at it, or set ALLOW_HELDOUT=1 to train "
                      f"without the guard.")
-        print(f"[WARN] §0b: {ho_file} not found and ALLOW_HELDOUT set -- "
+        print(f"[WARN] §0 held-out: {ho_file} not found and ALLOW_HELDOUT set -- "
               f"held-out containment is UNVERIFIED for this run")
         heldout = set()
     else:
@@ -336,16 +343,16 @@ def main() -> int:
     bleed = cases & heldout
     if bleed and not os.environ.get("ALLOW_HELDOUT"):
         sys.exit(
-            f"[FAIL] §0b: {len(bleed)} held-out scoring case(s) in the "
+            f"[FAIL] §0 held-out: {len(bleed)} held-out scoring case(s) in the "
             f"training rows: {sorted(bleed)[:8]}\n"
             f"       Those are the cases every arm is compared on. Pass a "
             f"--case-list that excludes {ho_file}, or set ALLOW_HELDOUT=1 "
             f"if this run is deliberately trained on everything.")
     if bleed:
-        print(f"[WARN] §0b: training on {len(bleed)} held-out case(s) "
+        print(f"[WARN] §0 held-out: training on {len(bleed)} held-out case(s) "
               f"(ALLOW_HELDOUT set) -- held-out scores are now invalid")
     else:
-        print(f"[PASS] §0b: no held-out scoring case in the pool "
+        print(f"[PASS] §0 held-out: no held-out scoring case in the pool "
               f"({len(heldout)} checked)")
 
     # The eval split, carved from the ROWS rather than from the case list, so
@@ -353,7 +360,33 @@ def main() -> int:
     # SECOND reserved set, disjoint from heldout.txt above: that one exists to
     # compare arms after training, this one to watch generalisation during it.
     eval_rows: list[dict] = []
-    if args.eval_cases:
+    if args.eval_case_list and args.eval_cases:
+        sys.exit("[FAIL] --eval-case-list and --eval-cases are mutually "
+                 "exclusive: one names the eval cases, the other samples them.")
+    if args.eval_case_list:
+        # Read from --rows directly. `rows` here is already filtered by
+        # --case-list, which EXCLUDES these cases by construction -- that is
+        # the whole point of the held-out file -- so they have to be loaded a
+        # second time rather than partitioned out of what is in hand.
+        #
+        # This runs AFTER the §0 held-out guard above, and must: that guard
+        # refuses a run whose TRAINING rows contain a held-out case, and these
+        # rows never enter `rows`. Watching a case's loss is not training on it.
+        want = {l.strip() for l in args.eval_case_list.read_text().splitlines()
+                if l.strip() and not l.startswith("#")}
+        eval_rows = [r for r in load_rows(args.rows, None, None, args.seed)
+                     if r["case_id"] in want]
+        if not eval_rows:
+            sys.exit(f"[FAIL] --eval-case-list {args.eval_case_list} matched no "
+                     f"row in {args.rows}")
+        got = {r["case_id"] for r in eval_rows}
+        print(f"[INFO] eval split: {len(got)} case(s) / {len(eval_rows)} row(s) "
+              f"from {args.eval_case_list.name}; all {len(rows)} training "
+              f"row(s) over {len(cases)} case(s) kept")
+        if got & cases:
+            sys.exit(f"[FAIL] {len(got & cases)} eval case(s) are also in the "
+                     f"training rows: {sorted(got & cases)[:8]}")
+    elif args.eval_cases:
         import random as _random
         pool = sorted({r["case_id"] for r in rows})
         n = min(args.eval_cases, max(0, len(pool) - 1))
@@ -409,7 +442,7 @@ def main() -> int:
         print(f"[INFO] quantizer {type(quant).__name__}: is_trainable={trainable}")
         if trainable is False:
             print("[WARN] transformers marks this checkpoint untrainable "
-                  "(gptqmodel>=5.0.0 missing -- §4.3). None of the arms touch a "
+                  "(gptqmodel>=5.0.0 missing -- plan log, 'Why training never loads AWQ'). None of the arms touch a "
                   "quantized weight, so --probe-backward is what settles "
                   "whether it matters here.")
 
@@ -459,7 +492,7 @@ def main() -> int:
           f"optimizer step(s)")
     trainer.train()
 
-    # The training peak, not the probe's. §4.4 budgeted 25-28 GB against a
+    # The training peak, not the probe's. the plan's memory-budget log entry budgeted 25-28 GB against a
     # 40 GB card; the probe measured 60.28 GiB on one row with checkpointing
     # already on, and rows vary in length, so the number that decides whether
     # an arm can have a plain a100 is this one.

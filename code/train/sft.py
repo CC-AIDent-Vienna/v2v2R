@@ -10,29 +10,28 @@ what runs, where, and under which interpreter. See code/train/README.md for
 what the modules are and code/train/dataset.py for what a row is.
 
     STAGE=pool     sft.py    select the training pool
-    STAGE=draft    sft.py    teacher writes visual_evidence      [GPU]
-    STAGE=screen   sft.py    student screens it for perceivability [GPU]
-    STAGE=targets  sft.py    build sft_wide.jsonl
+    STAGE=targets  sft.py    build sft_targets.jsonl
     STAGE=parity   sft.py    token-id equality gate              [GPU]
     STAGE=train    sft.py    the arm                             [GPU]
     STAGE=merge    sft.py    adapter -> servable AWQ checkpoint
 
 WHY THIS FILE EXISTS, WHICH IS NOT "TO HAVE A DRIVER"
 ─────────────────────────────────────────────────────
-Three of the seven stages boot a vLLM server, and the seven do NOT agree on
-where their client runs or which Python runs it. That map is the whole content
-of this file, and it was previously spread across five shell scripts where
-nothing stated it:
+The stages do NOT agree on where their client runs or which Python runs it.
+That map is the whole content of this file, and it was previously spread
+across five shell scripts where nothing stated it:
 
   stage    server    client runs      interpreter
   ------------------------------------------------------------------
   pool     -         host             base   (nibabel / PIL / schema)
   targets  -         host             base
-  draft    teacher   IN CONTAINER     the container's own python3
-  screen   student   IN CONTAINER     the container's own python3
   parity   student   host             SFT    (torch 2.11 / transformers 5.9)
   train    -         host             SFT
   merge    -         host             SFT
+
+Two more -- `draft` and `screen`, the visual-evidence pass -- register
+themselves from code/train/visual_evidence/ when that directory is present.
+It is a research side arm and is not part of the released path.
 
 The container/host split is not stylistic: vLLM exists only inside the image,
 and the training stack (`torch==2.11.0`, `transformers==5.9.0`) exists only in
@@ -48,7 +47,7 @@ Each underlying module has its own tuned defaults -- TOKENS_PER_REQUEST,
 MIN_VISIBLE, the arm table, the LoRA hyper-parameters. This file does not
 mirror them: everything after `--` goes to the stage's module verbatim.
 
-    sft.py --stage train -- --arm vision+merger --rows sft_wide.jsonl
+    sft.py --stage train -- --arm vision+merger --rows sft_targets.jsonl
 
 That way a flag this file has never heard of still works, and a default only
 ever lives in one place.
@@ -84,8 +83,6 @@ add_code_paths()
 STAGES = {
     "pool":    dict(module="select_sft_pool.py",           python="base",      server=None),
     "targets": dict(module="build_sft_targets.py",         python="base",      server=None),
-    "draft":   dict(module="draft_evidence.py",            python="container", server="teacher"),
-    "screen":  dict(module="check_evidence_perceivable.py", python="container", server="student"),
     "parity":  dict(module="check_prompt_parity.py",       python="sft",       server="student"),
     "train":   dict(module="trainer.py",                   python="sft",       server=None),
     "merge":   dict(module="merge_vision_lora.py",         python="sft",       server=None),
@@ -192,13 +189,37 @@ def interpreter(kind: str, args) -> List[str]:
 
 
 def module_arg(kind: str, module: str) -> str:
-    """Where the module is, from the point of view of the interpreter."""
+    """Where the module is, from the point of view of the interpreter.
+
+    Both answers come from module_path(), which searches the code groups, so a
+    module that moves between them needs no edit here. The container path used
+    to be spelled `/project/code/train/{module}` -- a second, silently stale
+    copy of the layout the moment a stage's module lived anywhere else.
+    """
+    p = module_path(module)
     if kind == "container":
-        return f"/project/code/train/{module}"
-    return str(module_path(module))
+        return f"/project/{p.relative_to(REPO_ROOT).as_posix()}"
+    return str(p)
+
+
+def register_research_stages() -> None:
+    """Add the visual-evidence stages, if this repo has them.
+
+    Lazy, and inside a function, for one reason beyond tidiness:
+    tools/make_release.py derives the released file set from the MODULE-SCOPE
+    import closure of the entry points, so an import in here is how a stage
+    stays out of it. The released tree has no visual_evidence/ directory and
+    `--stage draft` there is an argparse error, which is the honest answer.
+    """
+    try:
+        import evidence_stages           # code/train/visual_evidence/
+    except ImportError:
+        return
+    STAGES.update(evidence_stages.STAGES)
 
 
 def main() -> int:
+    register_research_stages()          # before --stage choices are built
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -210,7 +231,7 @@ def main() -> int:
     ap.add_argument("--model-dir", type=Path, default=REPO_ROOT / "models")
     ap.add_argument("--project-dir", type=Path, default=REPO_ROOT)
     ap.add_argument("--teacher-model", default="Qwen3.5-27B",
-                    help="writes the evidence (STAGE=draft)")
+                    help="writes the evidence (STAGE=draft, research only)")
     ap.add_argument("--student-model", default="Qwen3.5-9B-AWQ",
                     help="the model that will be trained and served. The "
                          "screen and the parity gate MUST use it: asking the "
