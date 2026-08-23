@@ -20,6 +20,8 @@ models/
 
 # Rendered images, at any depth.
 *.png
+# ...except the README's pipeline banner, which is a document, not a render.
+!docs/pipeline.png
 
 # Python
 __pycache__/
