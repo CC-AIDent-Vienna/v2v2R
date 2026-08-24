@@ -7,10 +7,11 @@ CBCT Report Generation, built for the **ODIN2026 / ToothFairy4** challenge.
 
 The main inference pipeline:
 
-- **[Input]** dental CBCT volume + segmentation mask + segmentation-derived facts
-- **[Preprocess]** anatomy-aware renders → image generation + schema ⇒ image–question pairs
-- **[VQA inference]** a fine-tuned vision-language model answers a fixed clinical schema
-- **[Postprocess]** rule-based postprocess + template-based report generation
+
+- **[multiclass segmentation]** dental CBCT volume -> segmentation mask + segmentation-derived facts
+- **[image–question pair generation]** anatomy-aware renders → image generation + schema ⇒ image–question pairs
+- **[VQA inference]** LoRA fine-tuned vision-language model answers a fixed clinical schema
+- **[Post-process]** rule-based postprocess + template-based report generation
 
 
 ## Data
