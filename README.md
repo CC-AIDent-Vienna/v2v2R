@@ -16,15 +16,16 @@ The main inference pipeline:
 
 ## Data
 
-Not included. Get the volumes, masks and reference reports from the
-[ToothFairy4 challenge](https://ditto.ing.unimore.it/toothfairy4/#download)
-under its data-use terms, and lay them out as:
+Not included. Get the volumes and reference reports from
+[ToothFairy4 challenge](https://ditto.ing.unimore.it/toothfairy4/#download).
+
+**Data layout:**
 
 ```
 dataset/{training,validate}/
   images/   {case}_0000.nii.gz
   masks/    {case}.nii.gz
-  reports/  {case}_1.txt, {case}_2.txt, ...   (a case may have several readers)
+  reports/  {case}_1.txt, {case}_2.txt, ...   (a case may have several reports)
   facts/    {case}.json
 ```
 
@@ -33,11 +34,9 @@ dataset/{training,validate}/
 
 The fine-tuned checkpoint is
 [lucent517/v2v2r_cbct_vqa](https://huggingface.co/lucent517/v2v2r_cbct_vqa) —
-LoRA SFT on `Qwen3.5-9B`, merged into the AWQ checkpoint so it is served like
-any other model. Fetch it into `models/`, which is where every script looks:
+LoRA SFT on `Qwen3.5-9B`, merged into the AWQ checkpoint. Fetch it into `models/`:
 
 ```bash
-pip install -U huggingface_hub
 hf download lucent517/v2v2r_cbct_vqa \
     --local-dir models/Qwen3.5-9B-AWQ-dental-cbct-sft
 ```
@@ -53,9 +52,6 @@ snapshot_download(
 )
 ```
 
-That directory name is the default `MODEL_NAME`, so the commands below find it
-with nothing set. Any other name works too — pass it as `MODEL_NAME=<dir>`.
-
 
 ## Run it
 
@@ -65,7 +61,7 @@ different hardware:
 ```bash
 STAGE=images sbatch scripts/run_infer.sh validate   # CPU partition, no GPU held
 STAGE=infer  sbatch scripts/run_infer.sh validate   # the only GPU stage
-STAGE=post         scripts/run_infer.sh validate    # login node, seconds/case
+STAGE=post         scripts/run_infer.sh  validate   # login node, seconds/case
 STAGE=all    sbatch scripts/run_infer.sh validate   # one job, one case
 ```
 
@@ -93,8 +89,8 @@ time went, phase by phase.
 
 LoRA SFT on the vision tower, the vision–language merger and the language
 model's attention projections (`ARM=vision+language`) of bf16 `Qwen3.5-9B`, over
-9,520 image–question–answer pairs from 528 cases. One stage per submission,
-because they want different cards and each is a decision point:
+9,520 image–question–answer triplets. One stage per submission,
+because they want different cards:
 
 ```bash
 STAGE=pool                 scripts/run_sft.sh   # case lists; not optional
@@ -111,12 +107,6 @@ model is fine-tuned for a prompt it will never see.
 `STAGE=merge` writes a checkpoint of the same shape as the released one, so a
 model trained here is served by the commands in [Run it](#run-it) unchanged.
 
-The released model was trained without teacher-written `visual_evidence`. That
-pass is a research side arm living in `code/train/visual_evidence/`, which
-registers two further stages (`draft`, `screen`) only where that directory is
-present — outside this repository `STAGE=draft` is an argparse error, which is
-the honest answer.
-
 
 ## Environment and hardware
 
@@ -127,7 +117,7 @@ python -m nltk.downloader wordnet omw-1.4   # DATA, not a pip package
 ```
 
 **The third line is not optional if you intend to compare scores.** METEOR is
-half the captioning score, and without wordnet the ranking silently falls back
+half the captioning score, and without `wordnet` the ranking silently falls back
 to a lite implementation on a different scale. It warns and records
 `meteor_backend` in `summary.json` either way; every score reported for this
 work is `"nltk-wordnet"`.
@@ -144,20 +134,6 @@ trusting it.
 `radfact-lite` is pinned to a git SHA, not a PyPI version, and the pin is
 load-bearing: PyPI's 0.1.0 predates a rewrite of the TOOTHFAIRY prompts, so
 `pip install radfact-lite` gives a score not comparable with any number here.
-
-Inference and the judge each want an A100, and a vLLM load takes 15–25 minutes,
-which is why the pipeline starts the server first and renders while it loads.
-
-**These scripts encode one site's SLURM configuration.** Five things to change
-for your cluster, and nothing else is site-specific:
-
-| what | override |
-|---|---|
-| partition / QoS / GRES | edit the `#SBATCH` lines, or pass them on the submit line |
-| repo location | `PROJECT_DIR` |
-| container image | `SIF_PATH` |
-| host interpreter | `PYTHON` |
-| training interpreter | `SFT_PY` |
 
 
 ## License
