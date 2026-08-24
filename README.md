@@ -3,7 +3,7 @@
 From Voxels to Views to Reports (V2V2R): A Segmentation-Guided VLM Pipeline for
 CBCT Report Generation, built for the **ODIN2026 / ToothFairy4** challenge.
 
-![V2V2R pipeline](docs/pipeline.png)
+![V2V2R pipeline](docs/pipeline.pdf)
 
 The main inference pipeline:
 
