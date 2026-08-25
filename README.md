@@ -138,5 +138,11 @@ load-bearing: PyPI's 0.1.0 predates a rewrite of the TOOTHFAIRY prompts, so
 
 ## License
 
-MIT, for the code — see [LICENSE](LICENSE). Challenge data and upstream model
-weights carry their own terms and are not redistributed here.
+MIT, for the original code — see [LICENSE](LICENSE). Challenge data and
+upstream model weights carry their own terms and are not redistributed here.
+
+The segmentation stage builds on U-Mamba2, which is CC BY-NC 4.0, and one file
+here is derived from it. That makes the pipeline **as a whole** research and
+non-commercial use only. The original code stays MIT regardless — CC BY-NC
+carries no share-alike term. See [THIRD_PARTY.md](THIRD_PARTY.md) for the
+per-project detail and the list of derived files.
