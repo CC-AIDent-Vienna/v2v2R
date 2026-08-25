@@ -826,7 +826,7 @@ def render_case(case: str, dataset_dir: Path, images_dir: Path,
     # WHICH facts is a real choice, not a path detail. dataset/<split>/facts
     # is what gen_images_cpu.sh and aksssr_pipeline.sh have always rendered
     # from, and is the default here so this driver reproduces them. infer.py
-    # renders from an AUDITED copy instead -- audit_facts.py corrects facts
+    # renders from an AUDITED copy instead -- extract_facts.py's audit corrects facts
     # the mask contradicts, and create_panoramic.py filters its outlines by
     # facts.structured.teeth_present, so the two can differ in PIXELS and not
     # merely in caption text. Pass --facts-dir to render from the audited

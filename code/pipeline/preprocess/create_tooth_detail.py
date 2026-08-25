@@ -94,7 +94,7 @@ from create_panoramic import (RIGHT_FDI, LEFT_FDI, _side_anchor,
                               _normalize_bridge_spans)
 # The maxilla-coverage verdict and its threshold live in create_3d_renders and
 # are imported, never restated: the composites that get skipped here, the
-# captions written there, and audit_facts.py must all agree on what "the
+# captions written there, and extract_facts.py must all agree on what "the
 # maxilla is not in this volume" means, or a case ends up with no upper
 # composites and a caption still promising them.
 from create_3d_renders import (MIN_ARCH_BONE_MM3, arch_coverage,
@@ -117,7 +117,7 @@ CANAL_ALPHA = 0.7
 
 # FDI codes this script treats as maxillary. Permanent only -- these index
 # tooth composites, and the mask's label map is FDI for 11-48 alone (see the
-# note in audit_facts.py about labels 50+ being other anatomy).
+# note in extract_facts.py about labels 50+ being other anatomy).
 MAXILLA_FDIS = frozenset(range(11, 19)) | frozenset(range(21, 29))
 
 

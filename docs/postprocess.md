@@ -88,7 +88,7 @@ a config file.
 | canal-adjacent | `canal_adjacent` | `facts.ian_close_teeth`; neither read consulted | yes |
 | canal location | `canal_location` | the composite's per-tooth value where 36–38 / 46–48 agree, else the prior `lingual` | yes |
 | alveolar atrophy | `atrophy` | state atrophy where the mask makes the arch fully edentulous; otherwise silent. The model's own `atrophy` is not read | yes |
-| fixed bridges | `bridges` | `facts.bridge_arches` (written by `audit_facts.py --derive-bridge-arches`), per arch. **No span is claimed** | yes |
+| fixed bridges | `bridges` | `facts.bridge_arches` (written by `extract_facts.py --derive-bridge-arches`), per arch. **No span is claimed** | yes |
 | condyle scope | `condyle_fov` | `fov.condyles == "excluded"` → `not_included`; `fov.maxilla == "excluded"` implies it; else the merged read stands | yes |
 
 **Two more findings ride the same `--facts-dir` flag and are not in `RULES`:**

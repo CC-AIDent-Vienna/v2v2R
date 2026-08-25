@@ -22,12 +22,12 @@ wanted:
     be turned off on its own -- from a config file, without touching this file:
     see RULES below and configs/postprocess/README.md.
   * What each rule changed is recorded in `source_rules` inside the summary,
-    so a rewrite is never silent -- the same contract audit_facts.py keeps.
+    so a rewrite is never silent -- the same contract the facts audit keeps.
 
 WHAT IS DELIBERATELY NOT HERE
 ─────────────────────────────
 `fixed bridges` does not DERIVE anything: the mask's per-arch bridge finding is
-written into the facts file by `audit_facts.py --derive-bridge-arches`, and this
+written into the facts file by `extract_facts.py --derive-bridge-arches`, and this
 module only USES it. It uses it as a SOURCE, not a gate -- an arch the mask
 marks gets a bridge whether the model found one or not, because gating alone
 left 4 of the 6 mask-confirmed cases reporting no bridge at all. See

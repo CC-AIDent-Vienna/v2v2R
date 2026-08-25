@@ -298,11 +298,13 @@ def prepare_facts(case: str, mask: Path, facts_in: Optional[Path],
     THE AUDIT IS OFF BY DEFAULT AS OF 2026-08-21, and that is a statement
     about where facts come from, not about whether the audit is right.
     `dataset/<split>/facts` now holds facts that have ALREADY been audited and
-    accepted upstream, so running audit_facts.py over them again is a no-op:
+    accepted upstream, so running the audit over them again is a no-op:
     measured on all 40 validate cases, "Cases already consistent: 40",
-    zero files changed, zero bytes. audit_facts.py is kept as the backup for
+    zero files changed, zero bytes. The audit is kept as the backup for
     the case it was written for -- facts arriving straight from a
     segmentation component, unreviewed -- and --audit-facts turns it back on.
+    It lives in extract_facts.py's audit mode (--facts-dir/--masks-dir); the
+    standalone audit_facts.py was folded into it on 2026-08-23 and deleted.
 
     Keeping it off is also what makes this renderer agree with
     build_vqa_pairs.py: both now render from the same unmodified facts, so
@@ -329,7 +331,7 @@ def prepare_facts(case: str, mask: Path, facts_in: Optional[Path],
     Neither is a correction to the upstream facts' clinical content; both are
     statements about the ACQUISITION that only the mask can make.
 
-    THE COPY IS NOT INCIDENTAL. audit_facts.py rewrites in place with
+    THE COPY IS NOT INCIDENTAL. the audit rewrites in place with
     --execute, and on Grand Challenge the input is read-only, so the file is
     copied into the run directory first and the copy is what everything
     downstream reads.
@@ -395,7 +397,7 @@ def prepare_facts(case: str, mask: Path, facts_in: Optional[Path],
         return target
 
     phases.start("facts:audit")
-    proc = subprocess.run([sys.executable, str(module_path("audit_facts.py")),
+    proc = subprocess.run([sys.executable, str(module_path("extract_facts.py")),
                            "--facts-dir", str(facts_dir),
                            "--masks-dir", str(mask_dir),
                            # This case only. The dir holds one file today, but
@@ -416,7 +418,7 @@ def prepare_facts(case: str, mask: Path, facts_in: Optional[Path],
         # simply have not been reconciled with the acquisition. Say so loudly
         # rather than dropping them, because the two rules above will then be
         # quietly inert.
-        print(f"[WARN] audit_facts failed ({proc.returncode}); using unaudited "
+        print(f"[WARN] extract_facts --facts-dir failed ({proc.returncode}); using unaudited "
               f"facts -- absent-teeth FOV gating and the bridge rule are OFF\n"
               f"{proc.stderr[-800:]}", file=sys.stderr)
     return target
@@ -568,7 +570,7 @@ def main() -> None:
                          "which is what a whole split wants. Needs "
                          "--dataset-dir.")
     ap.add_argument("--audit-facts", action="store_true",
-                    help="run audit_facts.py over the facts before rendering. OFF by default: dataset/<split>/facts is already audited upstream, and the pass is a measured no-op there (40/40 validate cases unchanged). Turn it on for facts that arrive straight from a segmentation component.")
+                    help="run extract_facts.py's audit mode over the facts before rendering. OFF by default: dataset/<split>/facts is already audited upstream, and the pass is a measured no-op there (40/40 validate cases unchanged). Turn it on for facts that arrive straight from a segmentation component.")
     ap.add_argument("--no-facts", action="store_true",
                     help="No facts at all: captions carry none and the source "
                          "rules stay off. The NO_FACTS=1 arm.")

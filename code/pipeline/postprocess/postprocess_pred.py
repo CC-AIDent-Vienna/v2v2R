@@ -3108,7 +3108,7 @@ def build_maxilla_section(g: Dict, teeth: Dict, notes: Optional[List[str]] = Non
 # THE RULE (2026-08-10, revised 2026-08-17): the maxilla's inclusion is the
 # gate, and with a facts file it is read from the ACQUISITION -- facts
 # .structured.fov.maxilla, which extract_facts.py measures off the mask and
-# audit_facts.py corrects. Only when there is no facts file does the model's
+# extract_facts.py corrects. Only when there is no facts file does the model's
 # own maxilla_scope.maxilla_included decide. Either way the three states are:
 #
 #     fully_included / partially_included -> KEEP EVERYTHING, unchanged. A
@@ -3134,7 +3134,7 @@ def build_maxilla_section(g: Dict, teeth: Dict, notes: Optional[List[str]] = Non
 # WHY THE FACTS AND NOT THE MODEL (2026-08-17). "Is the maxilla in this
 # volume" is a property of the acquisition, and the mask answers it exactly:
 # extract_facts.py already measures `mask == MAXILLA` against the volume's
-# superior edge, and audit_facts.py already rewrites fov.maxilla to "excluded"
+# superior edge, and extract_facts.py already rewrites fov.maxilla to "excluded"
 # below MIN_ARCH_BONE_MM3. The model is answering the same question off one 3D
 # render and gets it wrong in the destructive direction -- on validate-40 the
 # two disagree four times, and the one disagreement the old gate ACTED on was
@@ -3261,7 +3261,7 @@ def facts_maxilla_included(facts: Optional[Dict]) -> Optional[str]:
     """
     THE ACQUISITION'S OWN ANSWER, from facts.structured.fov.maxilla:
 
-        "excluded" -> "not_included"   (audit_facts.py wrote it: the mask holds
+        "excluded" -> "not_included"   (extract_facts.py wrote it: the mask holds
                                         less than MIN_ARCH_BONE_MM3 of maxilla)
         "partial"  -> "included"       (extract_facts.py: maxillary bone IS in
                                         the mask, cut off superiorly or carrying
