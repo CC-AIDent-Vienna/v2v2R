@@ -5,15 +5,43 @@ One CBCT volume in, one radiology report out.
 `infer.py` is the entry point and `scripts/run_infer.sh` submits it. The four
 subdirectories below are the stages, in order — though `infer.py` drives only
 the last three: `segmentation/` is the handover, and the mask and facts arrive
-as inputs. It reaches into that directory for two fallbacks only (deriving
-facts from a mask when none were passed, and the audit under `--audit-facts`).
+as inputs.
 
 | | |
 |---|---|
-| `segmentation/` | the mask + facts handover (and the facts audit, now folded into `extract_facts.py` — see [The facts audit](#the-facts-audit)) |
+| `segmentation/` | the mask + facts handover — inputs to this pipeline, not products of it. The facts audit is folded into `extract_facts.py` and runs at extraction |
 | `preprocess/` | volume + mask → rendered images → `qa_pairs.jsonl` |
 | `vqa/` | the VLM calls — the only stage that needs a GPU |
 | `postprocess/` | predictions → summaries → report — the rules it applies are [`configs/postprocess/`](../../configs/postprocess/), not constants in the code |
+
+## Run it
+
+```bash
+# One entry point, three stages. They are split because they want different
+# hardware, not for modularity -- see scripts/run_infer.sh.
+STAGE=images sbatch scripts/run_infer.sh validate   # CPU only, holds no GPU
+STAGE=infer  sbatch scripts/run_infer.sh validate   # the only GPU stage
+STAGE=post         scripts/run_infer.sh validate    # login node, seconds/case
+STAGE=all    sbatch scripts/run_infer.sh validate   # one job, for one case
+
+# Or call the Python directly: one case, every file named.
+python code/pipeline/infer.py \
+    --case-id A008 \
+    --volume     dataset/validate/images/A008_0000.nii.gz \
+    --mask       dataset/validate/masks/A008.nii.gz \
+    --facts-file dataset/validate/facts/A008.json \
+    --model      models/Qwen3.5-9B-AWQ-dental-cbct-sft \
+    --out-dir    outputs/one_case
+```
+
+`--partition`/`--qos`/`--gres` are deliberately **not** in the script: they
+differ per stage and per site, so they go on the `sbatch` line —
+`--partition=cpu --qos=cpu` for `images`, `--partition=gpu --qos=a100
+--gres=gpu:a100:1` for `infer` and `all`.
+
+Common overrides: `MODEL_NAME`, `MODEL_DIR`, `RUN_NAME`, `OUT_DIR`, `GT_DIR`,
+`CASE_ID` / `CASE_IDS` / `LIMIT`, `RESUME=1`, `NO_FACTS=1`, and
+`POSTPROCESS_CONFIG=configs/postprocess/<arm>.yaml`.
 
 ## Who does what
 
@@ -50,6 +78,7 @@ the volume at all.
                               ▼
                         3. post-process -> report.txt
 ```
+
 ## Container requirements
 
 Base must have **CUDA 12.8** — the platform runs driver 570, and CUDA 13 needs
