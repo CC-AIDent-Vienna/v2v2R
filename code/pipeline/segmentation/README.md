@@ -1,12 +1,27 @@
-# Segmentation — not in this repository
+# Segmentation
 
-This directory is deliberately empty. It marks stage 1 of the challenge
-pipeline, which this repository does not implement.
+Stage 1 of the challenge pipeline: CBCT volume -> labelled mask -> structured
+facts. Report generation (the rest of this repo) is the second half, and
+consumes the two files this stage hands it.
 
-The ToothFairy4 / ODIN2026 task splits in two. Segmentation turns the CBCT
-volume into a labelled mask; report generation turns that mask plus the volume
-into radiology prose. **This repo is the second half only.** Plug your own
-segmenter in here, or supply a mask and facts file produced elsewhere.
+- `segmentation.py` / `task1_inference.py` — the U-Mamba2/nnU-Net inference
+  wrapper used for the Grand Challenge submission: the L-first left/right
+  orientation fix and patch-bounded inference memory are `segmentation.py`'s;
+  `task1_inference.py` is adapted from U-Mamba2 (CC BY-NC 4.0 — see
+  `THIRD_PARTY.md`). Both expect `code/container/config.py` on the Python
+  path for `NNUNET_MODEL_FOLDER` / `NNUNET_CHECKPOINT` / `NNUNET_FOLDS` /
+  `USE_MIRRORING`.
+- `extract_facts.py` (v4) — mask -> `facts.json`, and/or corrects an existing
+  `facts.json` against the mask. Extraction and audit are the same code now;
+  see its module docstring for the two modes.
+- `audit_facts.py` — the standalone audit `extract_facts.py` v4 folded in.
+  Kept as `infer.py`'s fallback for facts arriving unaudited from elsewhere.
+- `facts.py`, `orientation.py` — the label-scheme seam and reorientation
+  helpers the above share.
+
+You can still swap in your own segmenter or hand in a mask/`facts.json` from
+elsewhere — nothing downstream cares how the two files below were produced,
+only that they match this interface.
 
 ## The interface
 
@@ -27,18 +42,15 @@ tooth in the report; one that never reaches it is never asked about. That is why
 the field is an input to *rendering* and not merely metadata.
 
 Everything else in `facts.json` is optional as input to the pipeline. Two fields
-are not optional as input to the **generators**, though, and no segmenter
-produces them:
+are not optional as input to the **generators**, though:
 
 | field | who needs it |
 |---|---|
 | `fov.maxilla: "excluded"` | the maxilla arch gate — see `../postprocess/source_rules.py` |
 | `bridge_arches` | the bridge source rule, same file |
 
-In the competition container these were written by a facts *audit* step that
-corrected a handed `facts.json` against the mask. That audit, and the
-mask-derived facts extractor it worked from, belong to the submission path and
-are not part of this release. If you supply your own facts, either write those
+`extract_facts.py` writes both by default (`--no-audit` restores the older,
+unaudited v3 output). If you supply facts from elsewhere, either write those
 two fields yourself or accept the defaults postprocess falls back to.
 
 ## Where the mask is actually read

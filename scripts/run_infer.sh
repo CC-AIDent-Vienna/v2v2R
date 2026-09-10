@@ -210,7 +210,7 @@ mkdir -p "$OUT_DIR" "$PROJECT_DIR/logs"
 # Only the infer stage enters the container: vLLM lives there and nowhere else
 # on this cluster. images and post are pure host Python -- nibabel, PIL and the
 # schema -- and putting them in the container would buy nothing and cost a
-# squashfs mount. See CLAUDE.md, "Environment".
+# squashfs mount.
 if [ "$STAGE" = infer ] || [ "$STAGE" = all ]; then
     [ -f "$CONTAINER" ] || { echo "[FAIL] no container: $CONTAINER" >&2; exit 1; }
     [ -d "$MODEL_DIR/$MODEL_NAME" ] || { echo "[FAIL] no model: $MODEL_DIR/$MODEL_NAME" >&2; exit 1; }

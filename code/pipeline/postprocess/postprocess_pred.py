@@ -3289,7 +3289,7 @@ def facts_maxilla_included(facts: Optional[Dict]) -> Optional[str]:
 
 def is_forced_excluded_case(case_id: Optional[str]) -> bool:
     """
-    Sub-dataset is the case-ID prefix letter (A004, S0030) -- see CLAUDE.md.
+    Sub-dataset is the case-ID prefix letter (A004, S0030).
     Off unless --force-maxilla-excluded-prefixes asked for it.
     """
     return bool(case_id) and case_id[0].upper() in FORCE_MAXILLA_EXCLUDED_PREFIXES

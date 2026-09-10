@@ -7,7 +7,7 @@ subdirectories below are the stages it drives, in order:
 
 | | |
 |---|---|
-| `segmentation/` | the mask + facts handover (and `audit_facts.py`, which is on its way upstream — see [The facts audit](#the-facts-audit-todo-it-moves-upstream)) |
+| `segmentation/` | the mask + facts handover — segmentation, fact extraction, and the mask-audit corrections all live here now (see [The facts audit](#the-facts-audit)) |
 | `preprocess/` | volume + mask → rendered images → `qa_pairs.jsonl` |
 | `vqa/` | the VLM calls — the only stage that needs a GPU |
 | `postprocess/` | predictions → summaries → report — the rules it applies are [`configs/postprocess/`](../../configs/postprocess/), not constants in the code |
@@ -27,18 +27,18 @@ timings as the reason the pipeline is shaped this way, not as a live constraint.
 |---|---|---|
 | **A. Segmentation** | *(segmentation)* | `mask.nii.gz` — per-tooth FDI labels + jaw structures |
 | **B. Facts** | *(segmentation)* | `facts.json` — which FDI numbers are present/absent |
-| **B′. Facts audit** | *(segmentation — **TODO**)* | `facts.json` already corrected against the mask |
+| **B′. Facts audit** | *(segmentation)* | `facts.json` already corrected against the mask |
 | **C. Report** | *(VQA)* | rendered images → VLM reads → `report.txt` |
 
 **vLLM belongs entirely to C.** B/B′ is the handover point: everything
 downstream needs to know which teeth actually exist, and whether they were in
 the volume at all.
 
-**Our input is the CBCT volume, the mask, and *audited* facts.** The two halves
-are being merged into one codebase, and the audit goes with the component that
-owns the facts — so this side does not call it. It is spelled out below anyway,
-because it is a requirement on what we are handed, not an implementation detail
-we can drop: see [The facts audit](#the-facts-audit-todo-it-moves-upstream).
+**Our input is the CBCT volume, the mask, and *audited* facts.**
+`extract_facts.py` (v4, in `segmentation/`) now applies the audit corrections
+at extraction time by default, so facts produced there are already audited.
+It is spelled out below anyway, because it is a requirement on what we are
+handed, not an implementation detail: see [The facts audit](#the-facts-audit).
 
 ## The pipeline
 
@@ -49,7 +49,7 @@ we can drop: see [The facts audit](#the-facts-audit-todo-it-moves-upstream).
      └─────────────────────────────────────────────────────────────┘
      ┌─────────────────────────────────────────────────────────────┐
      │ 1b. segmentation  ->  mask.nii.gz + facts.json (CPU/GPU)    │
-     │ 1b'. facts AUDITED against the mask (~2 s)   [upstream/TODO]│
+     │ 1b'. facts AUDITED against the mask (~2 s)                  │
      │ 1c. render images from volume + mask + AUDITED facts  (CPU) │
      │       panoramic | 3D views | sinus  (parallel)              │
      │       then 32 tooth close-ups (needs panoramic + 3D)        │
@@ -66,24 +66,20 @@ we can drop: see [The facts audit](#the-facts-audit-todo-it-moves-upstream).
 segmentation and rendering need CPU and (mostly) no GPU. Run them at the same
 time and one hides inside the other. Run them in sequence and you pay for both.
 
-## The facts audit — TODO: it moves upstream
+## The facts audit
 
-**Status.** The audit is `code/pipeline/segmentation/audit_facts.py`, and
-`infer.py` still runs it as the phase `facts:audit` (on a copy, before any
-generator opens the facts file) — that is what keeps the research runs here
-correct while the two halves are separate. **It is not where it belongs.** When
-the codebases are merged it goes to the component that produces the facts, and
-this side stops calling it:
+**Status: done.** `code/pipeline/segmentation/extract_facts.py` (v4) now runs
+both corrections below at fact-extraction time and emits `fov.maxilla` and
+`bridge_arches` by default — extracted facts are audited facts.
+`infer.py`'s own `facts:audit` phase (`audit_facts.py`, the pre-v4 standalone
+audit) is off by default as of 2026-08-21 and kept only as a fallback for
+facts that arrive unaudited from somewhere else; pass `--audit-facts` to turn
+it back on.
 
-- **TODO (segmentation side):** run the two corrections below at fact-extraction
-  time, and emit `fov.maxilla` and `bridge_arches` in the facts file.
-- **TODO (this side, after that lands):** drop the `facts:audit` phase from
-  `infer.py`, and take the audited facts straight from `/input`.
-
-Until both land, nothing here changes. What does *not* change either way is the
-contract: **every generator downstream assumes the facts it opens have already
-been audited against the mask.** The rest of this section is the specification
-of what that means — read it as a requirement on the input, whoever runs it.
+What does not change either way is the contract: **every generator downstream
+assumes the facts it opens have already been audited against the mask.** The
+rest of this section is the specification of what that means — read it as a
+requirement on the input, whoever runs it.
 
 ### Why it exists
 
@@ -121,10 +117,11 @@ It also writes `bridge_arches`, which upstream has no key for at all.
 Neither correction is something upstream could have made — both are statements
 about the **acquisition**, and only the mask can make them:
 
-- `fov.maxilla := "excluded"` is **never** set upstream; `extract_facts` writes
-  `"partial"` or nothing. Absent-teeth reporting gates on exactly that field,
-  and **12 of the 40 validate cases change** because of it.
-- the fixed-bridge rule reads `bridge_arches`, a key upstream never emits.
+- `fov.maxilla := "excluded"` was **never** set by `extract_facts` v3; v4 sets
+  it by default. Absent-teeth reporting gates on exactly that field, and
+  **12 of the 40 validate cases change** because of it.
+- the fixed-bridge rule reads `bridge_arches`, a key v3 never emitted; v4
+  emits it by default.
 
 ### How it is wired today, and what survives the move
 
@@ -299,10 +296,10 @@ What this side is handed — the CBCT volume, the mask, and **audited** facts:
 those teeth, so a segmentation false positive never becomes a tooth in the
 report. Everything else in the file is optional in the sense that a generator
 will not crash without it — but two fields the generators genuinely depend on
-are `fov.maxilla: "excluded"` and `bridge_arches`, and today `extract_facts`
-emits neither. They come from the audit, so the facts are only a usable input
-once the audit has run somewhere: upstream after the merge, and in the meantime
-in `infer.py`. Nothing about that makes it optional.
+are `fov.maxilla: "excluded"` and `bridge_arches`. `extract_facts.py` v4 emits
+both by default; facts extracted with `--no-audit`, or handed in from
+elsewhere unaudited, still need the audit run somewhere before use — in
+`infer.py` if nowhere else. Nothing about that makes it optional.
 
 ## Open questions
 
