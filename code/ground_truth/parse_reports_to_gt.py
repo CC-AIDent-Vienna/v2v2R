@@ -20,45 +20,6 @@ TWO STAGES, NOT ONE. THIS IS THE WHOLE DESIGN.
                 arch positions, all 32 per-tooth fact blocks, the wisdom
                 tooth facts, the quadrant implant counts.
 
-The previous version asked the LLM the schema's OWN questions directly --
-34 calls per report (mandible + maxilla + one per FDI), each one re-reading
-the same report through an image-shaped prompt. That failed three ways at
-once, all visible in dataset/training/outputs/ground_truth/A020_gt.json:
-
-  1. THE SCHEMA ASKS THE SAME FACT IN THREE PLACES, on purpose -- the VLM
-     reads it off three different images and postprocess_pred.py votes.
-     A report is ONE source, so asking it three times cannot add evidence;
-     it can only add disagreement. A020's report says teeth 43, 44, 45 and
-     48 are present, and the extraction returned dental_arch_findings_
-     mandible.findings = {"43": "absent", "44": "absent", "45": "absent",
-     "48": "absent"} while tooth_43_eruption / tooth_44_eruption / ... in
-     the SAME file said "fully_erupted". Teeth 11 and 21 came back the
-     other way round. Nothing downstream can repair a ground truth that
-     contradicts itself. Here, presence is extracted ONCE and every
-     dependent field is computed from it, so that class of contradiction
-     is unrepresentable.
-  2. SILENCE READ AS ABSENCE. A report describes what is notable; it does
-     not enumerate every normal tooth. Asked "what is the eruption state
-     of tooth 48", a model handed a report that never names 48 answers
-     "absent" -- which is a claim the report never made. Stage 1 asks only
-     for what the text states, and stage 2 applies the defaults in code.
-  3. INVENTED FIELDS. The image-shaped prompts carry visual_evidence and
-     the "how the finding is defined" prose, and the extractor echoed the
-     latter back as a field: every maxilla fact in A020_gt.json carries a
-     "how_the_finding_is_defined" key that exists in no schema. Stage 2
-     builds the objects, so only schema fields can appear.
-
-It is also 17x cheaper: 2 calls per report instead of 34. At 34 the job
-had to survive 34 consecutive successful calls per case -- one failure
-aborted the case -- and the training split had 14 of 933 reports done.
-
-WHY THE OUTPUT SHAPE STILL MATCHES {case_id}_pred.json EXACTLY
-────────────────────────────────────────────────────────────
-Unchanged from before: evaluating against {case_id}_summary.json would
-compare against something already lossy and re-classified. Evaluating
-against the (normalized) prediction, field by field, matches the
-granularity the VLM was actually asked at. Only the way the GT is
-PRODUCED changed, not what it is.
 
 NULL MEANS "THE REPORT DID NOT SAY"
 ────────────────────────────────────
@@ -1861,10 +1822,9 @@ def finalize_gt(case_id: str, report_facts: Dict, schema_path: str,
 # ── Claims the audit could not settle ─────────────────────────────────────
 #
 # audit_report_facts.py --mask-unresolved takes every claim that still raises
-# an ERROR out of its reader's file and lists it under "_unresolved". That is
-# the no-human replacement for the triage sheet, and this is its other half:
-# expand the case once WITH the claim and once WITHOUT, and null every label
-# the two disagree on. Those are exactly the labels the claim decides -- a
+# an ERROR out of its reader's file and lists it under "_unresolved". This is
+# its other half: expand the case once WITH the claim and once WITHOUT, and
+# null every label the two disagree on. Those are exactly the labels the claim decides -- a
 # crown claim reaches with_full_crown and the arch map's entry, a presence
 # claim reaches the whole tooth block -- found by running stage 2 rather than
 # by a second, hand-kept map from report fields to schema fields that would

@@ -244,9 +244,7 @@ def auto_resolve(args) -> int:
     The audit's four repairs are mechanical (FDI numbering or one stated
     range decides them). Whatever still raises an ERROR after them is a claim
     the report text cannot settle, and --mask-unresolved takes it out of its
-    reader's file; stage 2 then nulls every label that claim decides. This
-    replaces the triage sheet and the ACKNOWLEDGED table, which are human
-    decisions and are ignored here. Returns the final audit's exit code,
+    reader's file; stage 2 then nulls every label that claim decides. Returns the final audit's exit code,
     which is 0 exactly when nothing is left for anyone to decide.
     """
     audit = [sys.executable, str(module_path("audit_report_facts.py")),
@@ -260,7 +258,7 @@ def auto_resolve(args) -> int:
     replay = argparse.Namespace(**{**vars(args), "stage": "derive",
                                    "resume": False, "limit": None})
     extract(replay, vllm_url=None)
-    return subprocess.run(audit + ["--ignore-acknowledged"]).returncode
+    return subprocess.run(audit).returncode
 
 
 # ── what got written, and whether it is usable ──────────────────────────────
@@ -337,8 +335,7 @@ def main() -> int:
                          "is what makes the ground truth free of human "
                          "decisions. Exit code 1 if anything is still "
                          "unsettled. Without it the output is the raw "
-                         "extraction, which used to go to a human triage "
-                         "before it could be used.")
+                         "extraction.")
     ap.add_argument("--limit", type=int, help="smoke test: N cases, not files")
     ap.add_argument("--case-ids", nargs="+")
     ap.add_argument("--resume", action="store_true",

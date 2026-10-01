@@ -2,15 +2,6 @@
 """
 audit_report_facts.py -- can the report TEXT support what stage 1 extracted?
 
-A095 is why this exists. Its report says "Mucosal hyperplasia of the floor of
-the right maxillary sinus, bilaterally, greater on the left, with likely
-endodontic material on the sinus floor corresponding to 25", and stage 1 filed
-tooth 25 -- an upper LEFT tooth -- under sinus_RIGHT. Nothing downstream could
-see that: the value is a well-formed list of ints in a field that takes a list
-of ints, and stage 2 expands it faithfully into a ground truth that says the
-wrong side. It surfaced only because a schema change happened to make that one
-field visible, which is not a way to find the other ones.
-
 So this is the double-check for stage 1, and every screen in it is MECHANICAL
 -- decidable from the FDI numbering and the report text alone, no model, no
 GPU, no judgement. A screen that needed judgement would just be a second
@@ -38,10 +29,6 @@ Usage:
     python3 code/ground_truth/audit_gt/audit_report_facts.py --split training --screen laterality
     python3 code/ground_truth/audit_gt/audit_report_facts.py --split training --json audit.json
     python3 code/ground_truth/audit_gt/audit_report_facts.py --split training --case-ids A095 A003
-
-Exit code is 1 when any ERROR-level finding survives, so this can gate a
-rebuild: stage 2 is deterministic, and replaying it over bad stage-1 output
-just produces a confidently wrong ground truth faster.
 """
 
 import argparse
@@ -126,149 +113,6 @@ def split_sentences(text: str):
     guarded = re.sub(r"\b([a-zA-Z])\.(?=[a-zA-Z]\.|\s*\d)", r"\1<DOT>", guarded)
     return [s.replace("<DOT>", ".").strip()
             for s in re.split(r"(?<=[.;:])\s+", guarded) if s.strip()]
-
-
-# ── Decisions a reader has already made ────────────────────────────────────
-#
-# A screen cannot see that a positional phrase names a tooth, so it re-raises
-# the same finding after every rebuild and the reviewer answers it again. This
-# is where an answer is kept, in the project's own style: hand-checked, in
-# code, with the sentence that settles it beside the entry -- the same reason
-# Kept here rather than in a data file, on the reasoning the deleted
-# survey_findings.py used for its own tables.
-#
-# Keyed (stage-1 file stem, arch, field, FDI). Entries downgrade the finding
-# from ERROR to NOTE: the audit still reports what stage 1 said, it just stops
-# asking. A drop is NOT recorded here -- that is applied to report_facts by
-# apply_triage_decisions.py and the finding then no longer exists.
-ACKNOWLEDGED = {
-    ("A022", "maxilla", "root_remnants", 23):
-        'reviewed 2026-08-13: "a root remnant in the canine region of the 2nd '
-        'quadrant" -- quadrant 2 has one canine, so the phrase names 23',
-    ("F003_1", "maxilla", "endodontic", 16):
-        'reviewed 2026-08-13: "The distal teeth of the 1st quadrant have been '
-        'endodontically treated" covers 16, 17',
-    ("F003_1", "maxilla", "endodontic", 17):
-        'reviewed 2026-08-13: "The distal teeth of the 1st quadrant have been '
-        'endodontically treated" covers 16, 17',
-
-    # -- training, second batch of 2026-08-13: the arch-range conflicts, where
-    # -- the reviewer read the range against what else the report says at that
-    # -- position and the range lost, plus the rows read and left undecided.
-    # -- Both are recorded for the same reason: a decision that is not written
-    # -- down is a decision that gets asked again.
-    ("A094", "maxilla", "arch range", 15):
-        "reviewed 2026-08-13: the range does not win here -- A094_1.txt: \"15 and 26 are edentulous gaps;\"",
-    ("A098", "mandible", "present/absent", 41):
-        "reviewed 2026-08-13: read and left undecided -- the text does not settle it either way",
-    ("F045", "maxilla", "arch range", 16):
-        "reviewed 2026-08-13: the range does not win here -- F045_1.txt: \"Dental implants in positions 16 and 25, which appear radiologically well osseointegrated and\"",
-    ("F045", "maxilla", "arch range", 25):
-        "reviewed 2026-08-13: the range does not win here -- F045_1.txt: \"Dental implants in positions 16 and 25, which appear radiologically well osseointegrated and\"",
-    ("F045_2", "maxilla", "arch range", 16):
-        "reviewed 2026-08-13: the range does not win here -- F045_1.txt: \"Dental implants in positions 16 and 25, which appear radiologically well osseointegrated and\"",
-    ("F045_2", "maxilla", "arch range", 25):
-        "reviewed 2026-08-13: the range does not win here -- F045_1.txt: \"Dental implants in positions 16 and 25, which appear radiologically well osseointegrated and\"",
-    ("F048", "maxilla", "arch range", 17):
-        "reviewed 2026-08-13: the range does not win here -- F048_2.txt: \"17 is absent;\"",
-    ("F048_2", "maxilla", "arch range", 17):
-        "reviewed 2026-08-13: the range does not win here -- F048_2.txt: \"17 is absent;\"",
-    ("F061", "maxilla", "arch range", 17):
-        "reviewed 2026-08-13: the range does not win here -- F061_2.txt: \"Teeth 17 and 28 are missing.\"",
-    ("F061_2", "maxilla", "arch range", 17):
-        "reviewed 2026-08-13: the range does not win here -- F061_2.txt: \"Teeth 17 and 28 are missing.\"",
-    ("P015", "mandible", "arch range", 36):
-        "reviewed 2026-08-13: the range does not win here -- P015_2.txt: \"in the III quadrant, teeth from 38 to 31 are present, with tooth 36 missing.\"",
-    ("P015_2", "mandible", "arch range", 36):
-        "reviewed 2026-08-13: the range does not win here -- P015_2.txt: \"in the III quadrant, teeth from 38 to 31 are present, with tooth 36 missing.\"",
-    ("P042_1", "mandible", "root_remnants", 33):
-        "reviewed 2026-08-13: read and left undecided -- the text does not settle it either way",
-    ("P042_1", "mandible", "root_remnants", 34):
-        "reviewed 2026-08-13: read and left undecided -- the text does not settle it either way",
-    ("P042_1", "mandible", "root_remnants", 35):
-        "reviewed 2026-08-13: read and left undecided -- the text does not settle it either way",
-    ("P192", "mandible", "endodontic", 31):
-        "reviewed 2026-08-13: read and left undecided -- the text does not settle it either way",
-    ("P192", "mandible", "endodontic", 32):
-        "reviewed 2026-08-13: read and left undecided -- the text does not settle it either way",
-    ("P192", "mandible", "endodontic", 41):
-        "reviewed 2026-08-13: read and left undecided -- the text does not settle it either way",
-    ("P192", "mandible", "endodontic", 42):
-        "reviewed 2026-08-13: read and left undecided -- the text does not settle it either way",
-
-    # -- training, batch of 2026-08-13. Each entry carries the sentence the
-    # -- reviewer had in front of them, from whichever reader wrote it; the
-    # -- keeps that ADDED a tooth (the arch-range ones) are not here, because
-    # -- applying them removed the finding rather than affirming it.
-    ("F005_1", "maxilla", "root_remnants", 17):
-        "reviewed 2026-08-13 -- F005_1.txt: \"Presence of root remnants in the molar region of the 1st quadrant.\"",
-    ("F008", "maxilla", "sinus_left.intrasinusal_teeth", 26):
-        "reviewed 2026-08-13 -- F008_2.txt: \"The roots of the first, second and third molars bilaterally protrude into the maxillary sinuses.\"",
-    ("F008", "maxilla", "sinus_left.intrasinusal_teeth", 27):
-        "reviewed 2026-08-13 -- F008_2.txt: \"The roots of the first, second and third molars bilaterally protrude into the maxillary sinuses.\"",
-    ("F008", "maxilla", "sinus_right.intrasinusal_teeth", 16):
-        "reviewed 2026-08-13 -- F008_2.txt: \"The roots of the first, second and third molars bilaterally protrude into the maxillary sinuses.\"",
-    ("F008", "maxilla", "sinus_right.intrasinusal_teeth", 17):
-        "reviewed 2026-08-13 -- F008_2.txt: \"The roots of the first, second and third molars bilaterally protrude into the maxillary sinuses.\"",
-    ("F008_2", "maxilla", "sinus_left.intrasinusal_teeth", 26):
-        "reviewed 2026-08-13 -- F008_2.txt: \"The roots of the first, second and third molars bilaterally protrude into the maxillary sinuses.\"",
-    ("F008_2", "maxilla", "sinus_left.intrasinusal_teeth", 27):
-        "reviewed 2026-08-13 -- F008_2.txt: \"The roots of the first, second and third molars bilaterally protrude into the maxillary sinuses.\"",
-    ("F008_2", "maxilla", "sinus_right.intrasinusal_teeth", 16):
-        "reviewed 2026-08-13 -- F008_2.txt: \"The roots of the first, second and third molars bilaterally protrude into the maxillary sinuses.\"",
-    ("F008_2", "maxilla", "sinus_right.intrasinusal_teeth", 17):
-        "reviewed 2026-08-13 -- F008_2.txt: \"The roots of the first, second and third molars bilaterally protrude into the maxillary sinuses.\"",
-    ("P026_2", "mandible", "endodontic", 46):
-        "reviewed 2026-08-13 -- P026_1.txt: \"46 is the only tooth present in the arch, severely periodontally compromised, with endodontic in\"",
-    ("P033_2", "mandible", "canal_left.adjacent_teeth", 38):
-        "reviewed 2026-08-13 -- P033_1.txt: \"The left mandibular canal is in close relationship with impacted tooth 38.\"",
-    ("P033_2", "mandible", "canal_right.adjacent_teeth", 48):
-        "reviewed 2026-08-13 -- P033_1.txt: \"The right mandibular canal is in close relationship with impacted tooth 48.\"",
-    ("P041_2", "mandible", "canal_left.adjacent_teeth", 38):
-        "reviewed 2026-08-13 -- P041_1.txt: \"The left mandibular canal is in close relationship with the tooth germ of impacted tooth 38.\"",
-    ("P041_2", "mandible", "canal_right.adjacent_teeth", 48):
-        "reviewed 2026-08-13 -- P041_1.txt: \"The right mandibular canal is in close relationship with the tooth germ of impacted tooth 48.\"",
-    ("P042_1", "mandible", "endodontic", 33):
-        "reviewed 2026-08-13, kept on the reader's own reading",
-    ("P042_1", "mandible", "endodontic", 34):
-        "reviewed 2026-08-13, kept on the reader's own reading",
-    ("P049", "mandible", "caries", 34):
-        "reviewed 2026-08-13 -- P049_2.txt: \"the fourth tooth shows destructive caries involving the distal crown surface.\"",
-    ("P049", "mandible", "fillings", 45):
-        "reviewed 2026-08-13 -- P049_2.txt: \"the mesial surface of the fifth tooth is in contact with the distal surface of the fourth tooth,\"",
-    ("P049_2", "mandible", "caries", 34):
-        "reviewed 2026-08-13 -- P049_2.txt: \"the fourth tooth shows destructive caries involving the distal crown surface.\"",
-    ("P049_2", "mandible", "fillings", 45):
-        "reviewed 2026-08-13 -- P049_2.txt: \"the mesial surface of the fifth tooth is in contact with the distal surface of the fourth tooth,\"",
-    ("P114_1", "mandible", "canal_left.adjacent_teeth", 38):
-        "reviewed 2026-08-13 -- P114_1.txt: \"The mandibular canal has a predominantly lingual course in relation to the third molars.\"",
-    ("P217", "mandible", "canal_left.adjacent_teeth", 38):
-        "reviewed 2026-08-13 -- P217_1.txt: \"The inferior alveolar canal shows a predominantly buccal course on the left and a lingual course\"",
-    ("P217", "mandible", "canal_right.adjacent_teeth", 48):
-        "reviewed 2026-08-13 -- P217_1.txt: \"The inferior alveolar canal shows a predominantly buccal course on the left and a lingual course\"",
-    ("P232", "mandible", "canal_left.adjacent_teeth", 38):
-        "reviewed 2026-08-13 -- P232_1.txt: \"Impacted third molars, mesiolinguoversed, in close relationship to the mandibular canal, but not\"",
-    ("P232", "mandible", "canal_right.adjacent_teeth", 48):
-        "reviewed 2026-08-13 -- P232_1.txt: \"Impacted third molars, mesiolinguoversed, in close relationship to the mandibular canal, but not\"",
-    ("P256_2", "mandible", "canal_right.adjacent_teeth", 48):
-        "reviewed 2026-08-13 -- P256_1.txt: \"The right mandibular canal has a regular course, predominantly in an apico-lingual position, and\"",
-    ("P258_2", "mandible", "canal_right.adjacent_teeth", 48):
-        "reviewed 2026-08-13 -- P258_1.txt: \"Right mandibular canal with a regular course, predominantly in an apico-lingual position and dis\"",
-    ("P360_2", "mandible", "canal_left.adjacent_teeth", 38):
-        "reviewed 2026-08-13 -- P360_1.txt: \"The left mandibular canal shows a regular course, predominantly apico-lingual, in close contigui\"",
-    ("P360_2", "mandible", "canal_right.adjacent_teeth", 48):
-        "reviewed 2026-08-13 -- P360_1.txt: \"The right mandibular canal shows a regular course, predominantly apico-lingual, in close contigu\"",
-    ("P437_1", "mandible", "canal_left.adjacent_teeth", 38):
-        "reviewed 2026-08-13 -- P437_1.txt: \"The mandibular canal is in close buccal relationship with the apices of the third molars bilater\"",
-    ("P437_1", "mandible", "canal_right.adjacent_teeth", 48):
-        "reviewed 2026-08-13 -- P437_1.txt: \"The mandibular canal is in close buccal relationship with the apices of the third molars bilater\"",
-    ("S0008_2", "mandible", "canal_left.adjacent_teeth", 37):
-        "reviewed 2026-08-13 -- S0008_1.txt: \"The mandibular canal follows a predominantly lingual course bilaterally, in close relationship w\"",
-    ("S0008_2", "mandible", "canal_right.adjacent_teeth", 47):
-        "reviewed 2026-08-13 -- S0008_1.txt: \"Close proximity relationship of the right mandibular canal with teeth 48 and 47 is noted.\"",
-    ("S0040_2", "mandible", "fillings", 38):
-        "reviewed 2026-08-13 -- S0040_1.txt: \"Presence of restorations on tooth 38.\"",
-}
 
 
 def fdis_in_text(text: str) -> set:
@@ -720,9 +564,8 @@ def fix_intrasinusal(facts: dict, report_text: str) -> list:
 def mask_unresolved(facts: dict, items: list) -> list:
     """Take every claim the screens could not settle OUT of the file.
 
-    This is what replaces the human triage. A screen raises an ERROR exactly
-    when the text alone cannot decide the claim, and for a label that has one
-    honest answer: the reference did not settle it. So the claim is removed
+    A screen raises an ERROR exactly when the text alone cannot decide the
+    claim, and for a label that has one honest answer: the reference did not settle it. So the claim is removed
     from its list and recorded under the file's top-level "_unresolved" with
     the field's value as it stood (`original`). Stage 2 then expands the case
     both ways -- with and without the claim -- and nulls whatever the two
@@ -780,19 +623,14 @@ def _obj_fdis(value, key) -> list:
 
 
 def audit_case(case_id: str, facts: dict, report_text: str, screens: set,
-               stem: str = "", acknowledged: dict | None = None,
-               detail: list | None = None) -> list:
+               stem: str = "", detail: list | None = None) -> list:
     """[(level, screen, message)] for one stage-1 file.
 
-    `acknowledged` defaults to the ACKNOWLEDGED table; pass {} for a run no
-    human decision may touch. `detail`, when given, collects every surviving
-    ERROR as {arch, screen, field, fdi} -- the claim --mask-unresolved takes
+    `detail`, when given, collects every ERROR as {arch, screen, field, fdi} -- the claim --mask-unresolved takes
     out of the file.
     """
     out = []
     stated = fdis_in_text(report_text)
-    if acknowledged is None:
-        acknowledged = ACKNOWLEDGED
     # Claims --mask-unresolved already took out: settled as "the reference
     # does not decide this", and stage 2 has nulled what they decide.
     masked = {(u.get("arch"), u.get("field"), u.get("fdi"))
@@ -805,30 +643,11 @@ def audit_case(case_id: str, facts: dict, report_text: str, screens: set,
             return
         out.append(("ERROR", screen, message))
         if detail is not None:
-            # "present/absent" is the ACKNOWLEDGED table's spelling of the
-            # presence claim; the mask step calls it "presence".
             detail.append({"arch": arch, "screen": screen, "fdi": fdi,
-                           "field": "presence" if field == "present/absent" else field})
+                           "field": key})
 
     def emit(level, screen, message, field=None, fdi=None):
-        """Record a finding, unless a reader has already settled it.
-
-        The field is looked up both whole and truncated at its first dot,
-        because one row can be raised under either name: the not-in-text screen
-        knows it as "sinus_left.intrasinusal_teeth" and the sinus screen as
-        "sinus_left". Trying only one silently failed to suppress 25 recorded
-        decisions -- they kept appearing, which is the exact thing the table
-        exists to stop.
-        """
-        why = None
-        if field:
-            for key in (field, field.split(".")[0]):
-                why = acknowledged.get((stem or case_id, arch, key, fdi))
-                if why:
-                    break
-        if why and level == "ERROR":
-            level = "NOTE"
-            message = f"{message} [acknowledged -- {why}]"
+        """Record a finding; an ERROR also goes through the mask check."""
         if level == "ERROR":
             error(screen, message, field, fdi)
         else:
@@ -914,12 +733,6 @@ def audit_case(case_id: str, facts: dict, report_text: str, screens: set,
             # regex over dashes does not.
             for sentence, span in arch_range_spans(report_text, arch):
                 missing = sorted(span - set(_ints(block.get("teeth_present"))))
-                # One message carries a LIST, so a recorded decision removes its
-                # tooth from that list rather than silencing the row -- two teeth
-                # in one sentence can be settled separately.
-                settled = [f for f in missing
-                           if acknowledged.get((stem or case_id, arch, "arch range", f))]
-                missing = [f for f in missing if f not in settled]
                 for f in [f for f in missing if (arch, "presence", f) in masked]:
                     out.append(("NOTE", "arch-range",
                                 f"{arch}: {f} is inside \"{sentence[:44]}\" and not "
@@ -932,11 +745,6 @@ def audit_case(case_id: str, facts: dict, report_text: str, screens: set,
                     if detail is not None:
                         detail += [{"arch": arch, "screen": "arch-range",
                                     "field": "presence", "fdi": f} for f in missing]
-                for f in settled:
-                    out.append(("NOTE", "arch-range",
-                                f"{arch}: {f} is inside \"{sentence[:44]}\" and not "
-                                f"in teeth_present [acknowledged -- "
-                                f"{acknowledged[(stem or case_id, arch, 'arch range', f)]}]"))
 
         if "canal-adjacency" in screens and arch == "mandible":
             for side in ("canal_right", "canal_left"):
@@ -1017,15 +825,11 @@ def main():
                     help="add back the teeth an arch-sweep presence range "
                          "states and the extraction dropped. Same character "
                          "as --fix-laterality: the sentence has one reading.")
-    ap.add_argument("--ignore-acknowledged", action="store_true",
-                    help="audit as if no human decision existed: the "
-                         "ACKNOWLEDGED table downgrades nothing.")
     ap.add_argument("--mask-unresolved", action="store_true",
                     help="after any --fix-*, take every claim that still "
                          "raises an ERROR out of its reader's file and record "
-                         "it under _unresolved, for stage 2 to null. Implies "
-                         "--ignore-acknowledged: this is the no-human "
-                         "replacement for the triage sheet. Only reader files "
+                         "it under _unresolved, for stage 2 to null. Only "
+                         "reader files "
                          "are masked -- a multi-reader case's merged file is "
                          "rebuilt from them by the stage-2 replay.")
     ap.add_argument("--fix-laterality", action="store_true",
@@ -1040,7 +844,6 @@ def main():
     gt_dir = Path(args.gt_dir or root / f"dataset/{args.split}/outputs/ground_truth")
     reports_dir = Path(args.reports_dir or root / f"dataset/{args.split}/reports")
     screens = set(args.screen)
-    acknowledged = {} if (args.ignore_acknowledged or args.mask_unresolved) else None
 
     files = sorted(gt_dir.glob("*_report_facts.json"))
     if not files:
@@ -1072,7 +875,7 @@ def main():
             if args.mask_unresolved and not derived:
                 detail = []
                 audit_case(case_id, facts, report_text, screens, stem=stem,
-                           acknowledged={}, detail=detail)
+                           detail=detail)
                 applied += mask_unresolved(facts, detail)
             if applied:
                 backup = path.with_suffix(".json.bak")
@@ -1085,8 +888,7 @@ def main():
                     if not args.quiet:
                         print(f"[FIX  ] {path.name:34} {message}")
         for level, screen, message in audit_case(case_id, facts, report_text,
-                                                 screens, stem=stem,
-                                                 acknowledged=acknowledged):
+                                                 screens, stem=stem):
             findings.append({"file": path.name, "case_id": case_id,
                              "level": level, "screen": screen, "message": message})
             by_screen[(screen, level)] += 1

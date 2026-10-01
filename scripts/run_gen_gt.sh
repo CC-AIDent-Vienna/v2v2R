@@ -30,9 +30,8 @@
 # NO HUMAN IN THE GROUND TRUTH -- on by default, AUTO_RESOLVE=0 turns it off
 # -------------------------------------------------------------------------
 # After stage 2: the audit's mechanical repairs, then every claim they leave
-# unsettled is masked (its labels nulled) instead of going to the triage sheet,
-# stage 2 is replayed, and the job exits 1 unless the audit is clean. The
-# ACKNOWLEDGED table is ignored. Output goes straight to
+# unsettled is masked (its labels nulled), stage 2 is replayed, and the job
+# exits 1 unless the audit is clean. Output goes straight to
 # dataset/<split>/outputs/ground_truth/ -- which a full run OVERWRITES, so set
 # OUT_DIR to build somewhere else first if you want to compare. SCHEMA=
 # builds against another schema file than schema/schema.json:

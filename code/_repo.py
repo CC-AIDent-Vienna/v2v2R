@@ -32,8 +32,7 @@ GROUPS = (
     "pipeline/vqa",
     "pipeline/postprocess",
     "ground_truth",
-    # The audit half: checks, second opinions and the human triage loop.
-    # Separate so that nothing on the label-PRODUCING path needs a human.
+    # The audit half: mechanical checks on the stage-1 extraction.
     "ground_truth/audit_gt",
     "eval",
     "train",
