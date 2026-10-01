@@ -597,6 +597,10 @@ def fix_arch_range(facts: dict, report_text: str) -> list:
         if not isinstance(block, dict):
             continue
         absent = set(_ints(block.get("teeth_absent")))
+        # A tooth --mask-unresolved already took out of both lists stays out:
+        # the range is one side of the conflict that got it masked.
+        absent |= {u.get("fdi") for u in facts.get("_unresolved") or []
+                   if u.get("arch") == arch and u.get("field") == "presence"}
         for sentence, span in arch_range_spans(report_text, arch):
             present = set(_ints(block.get("teeth_present")))
             missing = sorted((span - present) - absent)
@@ -713,6 +717,61 @@ def fix_intrasinusal(facts: dict, report_text: str) -> list:
     return changes
 
 
+def mask_unresolved(facts: dict, items: list) -> list:
+    """Take every claim the screens could not settle OUT of the file.
+
+    This is what replaces the human triage. A screen raises an ERROR exactly
+    when the text alone cannot decide the claim, and for a label that has one
+    honest answer: the reference did not settle it. So the claim is removed
+    from its list and recorded under the file's top-level "_unresolved" with
+    the field's value as it stood (`original`). Stage 2 then expands the case
+    both ways -- with and without the claim -- and nulls whatever the two
+    disagree on, which is exactly the set of labels that claim decides: masked
+    in training, dropped in evaluation, and never guessed in either direction.
+
+    Top level, not inside the arch block, because stage 2 re-sanitizes each
+    arch block on every replay and would strip a key it does not know.
+
+    Returns [(message, kind)] and mutates `facts`. Idempotent: a claim already
+    taken out is no longer there to raise an ERROR.
+    """
+    import copy
+    changes, seen = [], set()
+    record = facts.setdefault("_unresolved", [])
+    for it in items:
+        key = (it["arch"], it["field"], it["fdi"])
+        block = facts.get(it["arch"])
+        if key in seen or not isinstance(block, dict):
+            continue
+        seen.add(key)
+        arch, field, fdi = key
+        entry = dict(it)
+        if field == "presence":
+            for k in ("teeth_present", "teeth_absent"):
+                block[k] = [x for x in _ints(block.get(k)) if x != fdi]
+        else:
+            top, _, sub = field.partition(".")
+            entry["original"] = copy.deepcopy(block.get(top))
+            value = block.get(top)
+            if top == "bridges":
+                for b in value if isinstance(value, list) else []:
+                    if isinstance(b, dict) and sub:
+                        b[sub] = [x for x in _ints(b.get(sub)) if x != fdi]
+            elif sub and isinstance(value, dict):
+                value[sub] = [x for x in _ints(value.get(sub)) if x != fdi]
+            elif top in dict(OBJ_LISTS):
+                block[top] = [e for e in value or []
+                              if not (isinstance(e, dict) and e.get(dict(OBJ_LISTS)[top]) == fdi)]
+            else:
+                block[top] = [x for x in _ints(value) if x != fdi]
+        record.append(entry)
+        changes.append((f"{arch}.{field}: {fdi} unresolved ({it['screen']}) -- "
+                        f"masked", "unresolved"))
+    if not record:
+        facts.pop("_unresolved")
+    return changes
+
+
 def _obj_fdis(value, key) -> list:
     if not isinstance(value, (list, tuple)):
         return []
@@ -721,10 +780,35 @@ def _obj_fdis(value, key) -> list:
 
 
 def audit_case(case_id: str, facts: dict, report_text: str, screens: set,
-               stem: str = "") -> list:
-    """[(level, screen, message)] for one stage-1 file."""
+               stem: str = "", acknowledged: dict | None = None,
+               detail: list | None = None) -> list:
+    """[(level, screen, message)] for one stage-1 file.
+
+    `acknowledged` defaults to the ACKNOWLEDGED table; pass {} for a run no
+    human decision may touch. `detail`, when given, collects every surviving
+    ERROR as {arch, screen, field, fdi} -- the claim --mask-unresolved takes
+    out of the file.
+    """
     out = []
     stated = fdis_in_text(report_text)
+    if acknowledged is None:
+        acknowledged = ACKNOWLEDGED
+    # Claims --mask-unresolved already took out: settled as "the reference
+    # does not decide this", and stage 2 has nulled what they decide.
+    masked = {(u.get("arch"), u.get("field"), u.get("fdi"))
+              for u in facts.get("_unresolved") or []}
+
+    def error(screen, message, field, fdi):
+        key = "presence" if field == "present/absent" else field
+        if (arch, key, fdi) in masked:
+            out.append(("NOTE", screen, f"{message} [unresolved -- masked]"))
+            return
+        out.append(("ERROR", screen, message))
+        if detail is not None:
+            # "present/absent" is the ACKNOWLEDGED table's spelling of the
+            # presence claim; the mask step calls it "presence".
+            detail.append({"arch": arch, "screen": screen, "fdi": fdi,
+                           "field": "presence" if field == "present/absent" else field})
 
     def emit(level, screen, message, field=None, fdi=None):
         """Record a finding, unless a reader has already settled it.
@@ -739,13 +823,16 @@ def audit_case(case_id: str, facts: dict, report_text: str, screens: set,
         why = None
         if field:
             for key in (field, field.split(".")[0]):
-                why = ACKNOWLEDGED.get((stem or case_id, arch, key, fdi))
+                why = acknowledged.get((stem or case_id, arch, key, fdi))
                 if why:
                     break
         if why and level == "ERROR":
             level = "NOTE"
             message = f"{message} [acknowledged -- {why}]"
-        out.append((level, screen, message))
+        if level == "ERROR":
+            error(screen, message, field, fdi)
+        else:
+            out.append((level, screen, message))
 
     for arch in ("mandible", "maxilla"):
         block = facts.get(arch)
@@ -773,16 +860,17 @@ def audit_case(case_id: str, facts: dict, report_text: str, screens: set,
             if "laterality" in screens:
                 for f in listed:
                     if f not in allowed:
-                        out.append(("ERROR", "laterality",
-                                    f"{arch}.{side}.{SIDE_FIELD_LIST[side]} holds "
-                                    f"{f}, which is not on that side"))
+                        error("laterality",
+                              f"{arch}.{side}.{SIDE_FIELD_LIST[side]} holds "
+                              f"{f}, which is not on that side",
+                              f"{side}.{SIDE_FIELD_LIST[side]}", f)
 
         if "laterality" in screens:
             for field, f in asserted:
                 if f in PRIMARY or f in legal:
                     continue
-                out.append(("ERROR", "laterality",
-                            f"{arch}.{field} holds {f}, a tooth of the other arch"))
+                error("laterality",
+                      f"{arch}.{field} holds {f}, a tooth of the other arch", field, f)
 
         if "not-in-text" in screens:
             for field, f in sorted(set(asserted)):
@@ -797,6 +885,15 @@ def audit_case(case_id: str, facts: dict, report_text: str, screens: set,
                 # a canal filling on a tooth names the tooth, so an unnamed one
                 # there is the extractor supplying a number of its own.
                 level = "NOTE" if field.split(".")[0] in DERIVED_FIELDS else "ERROR"
+                # The canal and sinus lists have screens of their own that
+                # read positional names too ("in close relationship with the
+                # third molars" is 38 and 48). Where that more specific screen
+                # finds the sentence, the missing digits prove nothing.
+                side = field.split(".")[0]
+                if side in SIDE_FIELD_LIST and (
+                        canal_adjacency_support if side.startswith("canal")
+                        else intrasinusal_support)(report_text, arch, f):
+                    level = "NOTE"
                 emit(level, "not-in-text",
                      f"{arch}.{field} asserts {f}, which the report never names",
                      field=field, fdi=f)
@@ -821,17 +918,25 @@ def audit_case(case_id: str, facts: dict, report_text: str, screens: set,
                 # tooth from that list rather than silencing the row -- two teeth
                 # in one sentence can be settled separately.
                 settled = [f for f in missing
-                           if ACKNOWLEDGED.get((stem or case_id, arch, "arch range", f))]
+                           if acknowledged.get((stem or case_id, arch, "arch range", f))]
                 missing = [f for f in missing if f not in settled]
+                for f in [f for f in missing if (arch, "presence", f) in masked]:
+                    out.append(("NOTE", "arch-range",
+                                f"{arch}: {f} is inside \"{sentence[:44]}\" and not "
+                                f"in teeth_present [unresolved -- masked]"))
+                missing = [f for f in missing if (arch, "presence", f) not in masked]
                 if missing:
                     out.append(("ERROR", "arch-range",
                                 f"{arch}: \"{sentence[:60]}\" sweeps the arch and "
                                 f"teeth_present is missing {missing}"))
+                    if detail is not None:
+                        detail += [{"arch": arch, "screen": "arch-range",
+                                    "field": "presence", "fdi": f} for f in missing]
                 for f in settled:
                     out.append(("NOTE", "arch-range",
                                 f"{arch}: {f} is inside \"{sentence[:44]}\" and not "
                                 f"in teeth_present [acknowledged -- "
-                                f"{ACKNOWLEDGED[(stem or case_id, arch, 'arch range', f)]}]"))
+                                f"{acknowledged[(stem or case_id, arch, 'arch range', f)]}]"))
 
         if "canal-adjacency" in screens and arch == "mandible":
             for side in ("canal_right", "canal_left"):
@@ -912,6 +1017,17 @@ def main():
                     help="add back the teeth an arch-sweep presence range "
                          "states and the extraction dropped. Same character "
                          "as --fix-laterality: the sentence has one reading.")
+    ap.add_argument("--ignore-acknowledged", action="store_true",
+                    help="audit as if no human decision existed: the "
+                         "ACKNOWLEDGED table downgrades nothing.")
+    ap.add_argument("--mask-unresolved", action="store_true",
+                    help="after any --fix-*, take every claim that still "
+                         "raises an ERROR out of its reader's file and record "
+                         "it under _unresolved, for stage 2 to null. Implies "
+                         "--ignore-acknowledged: this is the no-human "
+                         "replacement for the triage sheet. Only reader files "
+                         "are masked -- a multi-reader case's merged file is "
+                         "rebuilt from them by the stage-2 replay.")
     ap.add_argument("--fix-laterality", action="store_true",
                     help="rewrite the side-scoped lists so every FDI sits on "
                          "the side its own number names. Only that screen is "
@@ -924,6 +1040,7 @@ def main():
     gt_dir = Path(args.gt_dir or root / f"dataset/{args.split}/outputs/ground_truth")
     reports_dir = Path(args.reports_dir or root / f"dataset/{args.split}/reports")
     screens = set(args.screen)
+    acknowledged = {} if (args.ignore_acknowledged or args.mask_unresolved) else None
 
     files = sorted(gt_dir.glob("*_report_facts.json"))
     if not files:
@@ -940,8 +1057,11 @@ def main():
         if not report_text:
             continue
         facts = json.loads(path.read_text())
-        if (args.fix_laterality or args.fix_arch_range
-                or args.fix_canal_adjacency or args.fix_intrasinusal):
+        # A case-level file beside reader files is the MERGE of them, rewritten
+        # by every --consensus replay; editing it here would be overwritten.
+        derived = stem == case_id and any(gt_dir.glob(f"{case_id}_*_report_facts.json"))
+        if (args.fix_laterality or args.fix_arch_range or args.fix_canal_adjacency
+                or args.fix_intrasinusal or args.mask_unresolved):
             applied = (fix_laterality(facts) if args.fix_laterality else [])
             if args.fix_arch_range:
                 applied += fix_arch_range(facts, report_text)
@@ -949,6 +1069,11 @@ def main():
                 applied += fix_canal_adjacency(facts, report_text)
             if args.fix_intrasinusal:
                 applied += fix_intrasinusal(facts, report_text)
+            if args.mask_unresolved and not derived:
+                detail = []
+                audit_case(case_id, facts, report_text, screens, stem=stem,
+                           acknowledged={}, detail=detail)
+                applied += mask_unresolved(facts, detail)
             if applied:
                 backup = path.with_suffix(".json.bak")
                 if not backup.exists():
@@ -960,7 +1085,8 @@ def main():
                     if not args.quiet:
                         print(f"[FIX  ] {path.name:34} {message}")
         for level, screen, message in audit_case(case_id, facts, report_text,
-                                                 screens, stem=stem):
+                                                 screens, stem=stem,
+                                                 acknowledged=acknowledged):
             findings.append({"file": path.name, "case_id": case_id,
                              "level": level, "screen": screen, "message": message})
             by_screen[(screen, level)] += 1
@@ -984,7 +1110,7 @@ def main():
         print(f"  -> {args.json}")
 
     if (args.fix_laterality or args.fix_arch_range or args.fix_canal_adjacency
-            or args.fix_intrasinusal):
+            or args.fix_intrasinusal or args.mask_unresolved):
         print()
         print(f"repaired {sum(fix_counts.values())} finding(s) in "
               f"{len(fixed_cases)} case(s): "

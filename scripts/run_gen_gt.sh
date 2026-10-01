@@ -13,10 +13,11 @@
 # lifecycle, the port proofs, the flag marshalling and the output audit. This
 # file is the SLURM directives, the conda activation and the container path.
 #
-# PASS ONE OF THESE, OR THE RESULT IS UNUSABLE FOR 26 OF 40 VALIDATE CASES
-# -----------------------------------------------------------------------
+# CONSENSUS IS THE DEFAULT, OR THE RESULT IS UNUSABLE FOR 26 OF 40 VALIDATE CASES
+# -------------------------------------------------------------------------------
+#   (default)             merge every radiologist of a case, field by field
 #   FIRST_REPORT_ONLY=1   one report per case, the lowest-numbered radiologist
-#   CONSENSUS=1           merge every radiologist of a case, field by field
+#   CONSENSUS=0           neither -- per-reader files only, see below
 #
 # structured_findings_evaluation.py looks up exactly one file per case,
 # {case}_gt.json. With neither flag, a multi-report case writes only
@@ -25,6 +26,18 @@
 # shapes when it finishes and warns by name, but the flag is the fix.
 #
 # The two are mutually exclusive: consensus needs every radiologist's report.
+#
+# NO HUMAN IN THE GROUND TRUTH -- on by default, AUTO_RESOLVE=0 turns it off
+# -------------------------------------------------------------------------
+# After stage 2: the audit's mechanical repairs, then every claim they leave
+# unsettled is masked (its labels nulled) instead of going to the triage sheet,
+# stage 2 is replayed, and the job exits 1 unless the audit is clean. The
+# ACKNOWLEDGED table is ignored. Output goes straight to
+# dataset/<split>/outputs/ground_truth/ -- which a full run OVERWRITES, so set
+# OUT_DIR to build somewhere else first if you want to compare. SCHEMA=
+# builds against another schema file than schema/schema.json:
+#   SCHEMA=/path/to/schema.json \
+#       sbatch --partition=gpu --qos=a100 --gres=gpu:a100:1 scripts/run_gen_gt.sh training
 #
 # TWO STAGES, AND ONLY THE FIRST WANTS THIS JOB'S GPU
 # ---------------------------------------------------
@@ -119,13 +132,17 @@ PROJECT_DIR="${PROJECT_DIR:-$(_find_root "${SLURM_SUBMIT_DIR:-}" \
     echo "[FAIL] no schema/schema.json above ${SLURM_SUBMIT_DIR:-<unset>} or $0" >&2
     echo "[HINT] set PROJECT_DIR=/path/to/project_ToothFairy4" >&2; exit 1; }
 
+# SCHEMA= builds against another schema than the working copy's -- e.g. the
+# one a trained arm used, while schema/schema.json is mid-edit for the next.
+SCHEMA="${SCHEMA:-$PROJECT_DIR/schema/schema.json}"
+[ -f "$SCHEMA" ] || { echo "[FAIL] no schema: $SCHEMA" >&2; exit 1; }
 CONTAINER="${CONTAINER:-${SIF_PATH:-$HOME/containers/extraction.sqsh}}"
 MODEL_DIR="${MODEL_DIR:-$PROJECT_DIR/models}"
 MODEL_NAME="${QWEN_MODEL_NAME:-${MODEL_NAME:-Qwen3-14B}}"
 CONDA_ENV="${CONDA_ENV-cbct_base}"
 
 ARGS=(--split "$SPLIT" --stage "$STAGE"
-      --schema "$PROJECT_DIR/schema/schema.json"
+      --schema "$SCHEMA"
       --model-dir "$MODEL_DIR" --model-name "$MODEL_NAME")
 
 [ -n "${OUT_DIR:-}"      ] && ARGS+=(--out-dir "$OUT_DIR")
@@ -134,7 +151,10 @@ ARGS=(--split "$SPLIT" --stage "$STAGE"
 [ -n "${CASE_IDS:-}"     ] && ARGS+=(--case-ids ${CASE_IDS})
 [ -n "${RESUME:-}"       ] && ARGS+=(--resume)
 [ -n "${DRY_RUN:-}"      ] && ARGS+=(--dry-run)
-[ -n "${CONSENSUS:-}"    ] && ARGS+=(--consensus)
+if [ -z "${FIRST_REPORT_ONLY:-}" ] && [ "${CONSENSUS:-1}" != 0 ]; then
+    ARGS+=(--consensus)
+fi
+[ "${AUTO_RESOLVE:-1}" = 0 ] && ARGS+=(--no-auto-resolve)
 [ -n "${FIRST_REPORT_ONLY:-}" ] && ARGS+=(--first-report-only)
 [ -n "${PORT:-}"         ] && ARGS+=(--port "$PORT")
 [ -n "${MAX_MODEL_LEN:-}" ] && ARGS+=(--max-model-len "$MAX_MODEL_LEN")

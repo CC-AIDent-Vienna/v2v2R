@@ -238,6 +238,31 @@ def extract(args, vllm_url: Optional[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
+def auto_resolve(args) -> int:
+    """The audit, with no human in it: repair, mask, replay, gate.
+
+    The audit's four repairs are mechanical (FDI numbering or one stated
+    range decides them). Whatever still raises an ERROR after them is a claim
+    the report text cannot settle, and --mask-unresolved takes it out of its
+    reader's file; stage 2 then nulls every label that claim decides. This
+    replaces the triage sheet and the ACKNOWLEDGED table, which are human
+    decisions and are ignored here. Returns the final audit's exit code,
+    which is 0 exactly when nothing is left for anyone to decide.
+    """
+    audit = [sys.executable, str(module_path("audit_report_facts.py")),
+             "--gt-dir", str(args.out_dir), "--reports-dir", str(args.reports_dir),
+             "--quiet"]
+    if args.case_ids:
+        audit += ["--case-ids"] + args.case_ids
+    subprocess.run(audit + ["--fix-laterality", "--fix-arch-range",
+                            "--fix-canal-adjacency", "--fix-intrasinusal",
+                            "--mask-unresolved"])
+    replay = argparse.Namespace(**{**vars(args), "stage": "derive",
+                                   "resume": False, "limit": None})
+    extract(replay, vllm_url=None)
+    return subprocess.run(audit + ["--ignore-acknowledged"]).returncode
+
+
 # ── what got written, and whether it is usable ──────────────────────────────
 _PER_READER = re.compile(r"_[^_]+_gt\.json$")
 
@@ -304,6 +329,16 @@ def main() -> int:
                          "radiologist, written straight to {case}_gt.json. "
                          "The cheapest way to get the filename the evaluation "
                          "looks up.")
+    ap.add_argument("--no-auto-resolve", dest="auto_resolve",
+                    action="store_false",
+                    help="skip the default last step: the audit's mechanical "
+                         "repairs, masking every claim they leave unsettled, a "
+                         "stage-2 replay and a gate on a clean audit -- which "
+                         "is what makes the ground truth free of human "
+                         "decisions. Exit code 1 if anything is still "
+                         "unsettled. Without it the output is the raw "
+                         "extraction, which used to go to a human triage "
+                         "before it could be used.")
     ap.add_argument("--limit", type=int, help="smoke test: N cases, not files")
     ap.add_argument("--case-ids", nargs="+")
     ap.add_argument("--resume", action="store_true",
@@ -361,14 +396,17 @@ def main() -> int:
     # Neither of these touches a model, so neither pays for a server.
     if args.dry_run or args.stage == "derive":
         extract(args, vllm_url=None)
-        if not args.dry_run:
-            summarise(args.out_dir, args.consensus, args.first_report_only)
-        return 0
+        if args.dry_run:
+            return 0
+        rc = auto_resolve(args) if args.auto_resolve else 0
+        summarise(args.out_dir, args.consensus, args.first_report_only)
+        return rc
 
     if args.vllm_url:
         extract(args, vllm_url=args.vllm_url)
+        rc = auto_resolve(args) if args.auto_resolve else 0
         summarise(args.out_dir, args.consensus, args.first_report_only)
-        return 0
+        return rc
 
     model_path = (f"/models/{args.model_name}" if args.container
                   else str(args.model_dir / args.model_name))
@@ -391,8 +429,10 @@ def main() -> int:
     finally:
         server.stop()
 
+    # After the server is gone: the audit is CPU and should not hold the GPU.
+    rc = auto_resolve(args) if args.auto_resolve else 0
     summarise(args.out_dir, args.consensus, args.first_report_only)
-    return 0
+    return rc
 
 
 if __name__ == "__main__":

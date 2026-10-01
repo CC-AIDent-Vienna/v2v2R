@@ -892,6 +892,53 @@ def _eruption_depth_guard(fdi: int, report_text: Optional[str],
     return "partially_erupted"
 
 
+_QUADRANT_ARCH = {"1": "maxilla", "2": "maxilla", "3": "mandible", "4": "mandible",
+                  "i": "maxilla", "ii": "maxilla", "iii": "mandible", "iv": "mandible"}
+_MAXILLA_WORDS = ("maxill", "sinus", "palat", "upper", "antrum")
+_MANDIBLE_WORDS = ("mandib", "lower", "ramus", "condyl", "symphys", "chin")
+_QUAD_RE = re.compile(r"\b(?:([1-4])(?:st|nd|rd|th)?|(i{1,3}v?|iv))\s+quadrant", re.I)
+
+
+def _lesion_arch(lesion: dict):
+    """Which jaw a bone lesion belongs to, or None when the report never says.
+
+    The extractor lists every lesion in the report without assigning it to an
+    arch, so this is where placement happens. Three sources, most specific
+    first -- FDI numbers the lesion names, then FDI numbers and quadrant
+    references in its free-text location, then arch words. Quadrants are worth
+    parsing: "Osteorarefaction in the 3rd quadrant" and "canine region of the
+    III quadrant" name a jaw exactly, in both arabic and roman, and they are a
+    large share of what arch words alone cannot place.
+
+    Returns None rather than guessing when a location is genuinely
+    arch-agnostic ("post-extraction socket", "periradicular bone") or names
+    both jaws. The caller turns that into a null, not a false.
+    """
+    teeth = lesion.get("teeth") or []
+    up = any(11 <= t <= 28 for t in teeth)
+    lo = any(31 <= t <= 48 for t in teeth)
+    if up != lo:
+        return "maxilla" if up else "mandible"
+    if up and lo:
+        return None
+
+    text = (lesion.get("location") or "").lower()
+    for m in _QUAD_RE.finditer(text):
+        q = (m.group(1) or m.group(2) or "").lower()
+        if q in _QUADRANT_ARCH:
+            up = up or _QUADRANT_ARCH[q] == "maxilla"
+            lo = lo or _QUADRANT_ARCH[q] == "mandible"
+    for t in re.findall(r"\b([1-4][1-8])\b", text):
+        n = int(t)
+        up = up or 11 <= n <= 28
+        lo = lo or 31 <= n <= 48
+    up = up or any(w in text for w in _MAXILLA_WORDS)
+    lo = lo or any(w in text for w in _MANDIBLE_WORDS)
+    if up != lo:
+        return "maxilla" if up else "mandible"
+    return None
+
+
 def sanitize_report_facts(raw: Dict, arch: str,
                           report_text: Optional[str] = None) -> Dict:
     """Raw stage-1 JSON -> a fully typed, fully defaulted report-facts dict.
@@ -1370,9 +1417,28 @@ def expand_arch(f: Dict, out: Dict) -> Dict:
     g[f"fixed_bridges_{arch}"] = {
         "visual_evidence": "", "present": bool(bridges), "bridges": bridges}
 
-    lesion = f["bone_lesions"][0] if f["bone_lesions"] else None
+    # BONE LESIONS ARE NOT ARCH-SCOPED BY THE EXTRACTOR, AND USED NOT TO BE HERE.
+    # The extractor reads the whole report and lists every lesion in it, so
+    # f["bone_lesions"] is identical for both arches. This line used to take
+    # [0] unconditionally, which filed the report's FIRST lesion under BOTH
+    # jaws: bone_quality_mandible and bone_quality_maxilla came out identical
+    # in 968 of 1,274 cases, and 301 of the 379 non-empty maxillary locations
+    # actually described the mandible ("post-extraction socket of tooth 48",
+    # "symphyseal level"). bone_quality_maxilla.present then scored 0.000 in
+    # every arm -- against a label describing the other jaw.
+    #
+    # Placement, in order: the FDI numbers the lesion names, then the FDI
+    # numbers and quadrants in its location text, then arch words. A lesion
+    # that names neither jaw is left UNPLACED, and an arch that has no lesion
+    # of its own while an unplaced one exists gets `null`, not `false` -- the
+    # report stated a lesion and did not say where, which is exactly the
+    # "reference did not answer" case the loss mask and the metric both drop.
+    here = [l for l in f["bone_lesions"] if _lesion_arch(l) == arch]
+    unplaced = any(_lesion_arch(l) is None for l in f["bone_lesions"])
+    lesion = here[0] if here else None
     g[f"bone_quality_{arch}"] = {
-        "visual_evidence": "", "present": lesion is not None,
+        "visual_evidence": "",
+        "present": True if lesion else (None if unplaced else False),
         "type": lesion["type"] if lesion else None,
         "location": lesion["location"] if lesion else None}
 
@@ -1731,8 +1797,11 @@ def consensus_report_facts(per_reader: List[Dict], arch: str) -> Tuple[Dict, Dic
 
     merged["bridges"] = [b for f in facts for b in f["bridges"]][:1] if any(
         f["bridges"] for f in facts) else []
-    merged["bone_lesions"] = [l for f in facts for l in f["bone_lesions"]][:1] if any(
-        f["bone_lesions"] for f in facts) else []
+    # NOT [:1]. bone_quality carries one lesion per ARCH, and which one that
+    # is cannot be chosen before the lesions are placed -- truncating here
+    # threw away the maxillary lesion whenever a mandibular one was listed
+    # first. Keep them all; the arch builder takes the first of its own.
+    merged["bone_lesions"] = [l for f in facts for l in f["bone_lesions"]]
 
     for key, allowed, default in (("alveolar_atrophy", ("none", "present", "fully_edentulous"), "none"),
                                   ("periodontal_extent", BONE_LOSS_EXTENTS, "none")):
@@ -1786,6 +1855,89 @@ def finalize_gt(case_id: str, report_facts: Dict, schema_path: str,
               f"{summarize_repairs(repairs)}", file=sys.stderr)
     if derivation is not None:
         gt["_derivation"] = derivation
+    return gt
+
+
+# ── Claims the audit could not settle ─────────────────────────────────────
+#
+# audit_report_facts.py --mask-unresolved takes every claim that still raises
+# an ERROR out of its reader's file and lists it under "_unresolved". That is
+# the no-human replacement for the triage sheet, and this is its other half:
+# expand the case once WITH the claim and once WITHOUT, and null every label
+# the two disagree on. Those are exactly the labels the claim decides -- a
+# crown claim reaches with_full_crown and the arch map's entry, a presence
+# claim reaches the whole tooth block -- found by running stage 2 rather than
+# by a second, hand-kept map from report fields to schema fields that would
+# drift from expand_arch. null is already this file's word for "the reference
+# did not answer here": build_sft_targets.py masks it and
+# structured_findings_evaluation.py drops it.
+
+def _claim_variants(block: Dict, item: Dict, arch: str,
+                    report_text: Optional[str]) -> Tuple[Dict, Dict]:
+    """(one reading, the other) of one arch block for one unresolved claim."""
+    import copy
+    a, b = copy.deepcopy(block), copy.deepcopy(block)
+    fdi = item["fdi"]
+    if item["field"] == "presence":
+        a["teeth_present"] = a["teeth_present"] + [fdi]
+        b["teeth_absent"] = b["teeth_absent"] + [fdi]
+    else:
+        a[item["field"].split(".")[0]] = copy.deepcopy(item.get("original"))
+    return (sanitize_report_facts(a, arch, report_text),
+            sanitize_report_facts(b, arch, report_text))
+
+
+def _null_disagreement(target: Dict, a: Dict, b: Dict, fdi_map: bool = False) -> int:
+    """Null in `target` every value on which `a` and `b` disagree; count them.
+
+    A tooth block or fact that exists in only one reading, and an entry of the
+    arch map ({"46": "restoration"}), is REMOVED rather than nulled: a missing
+    position is how those containers already say "unstated", and a null
+    inside the map would be supervised as part of the map.
+    """
+    n = 0
+    for k in set(a) | set(b):
+        av, bv = a.get(k), b.get(k)
+        if av == bv or k not in target:
+            continue
+        if fdi_map or k not in a or k not in b:
+            target.pop(k)
+        elif isinstance(av, dict) and isinstance(bv, dict) and isinstance(target[k], dict):
+            n += _null_disagreement(target[k], av, bv, fdi_map=(k == "findings"))
+            continue
+        else:
+            target[k] = None
+        n += 1
+    return n
+
+
+def apply_unresolved(case_id: str, gt: Dict, per_reader: List[Dict],
+                     unresolved: List[List[Dict]], texts: List[Optional[str]],
+                     schema_path: str) -> Dict:
+    """Null in `gt` what each reader's unresolved claims decide.
+
+    `gt` is the expansion of `per_reader` merged (or of the one reader). Each
+    claim is replayed in the SAME merge it belongs to, so a claim another
+    reader states outright changes nothing and nulls nothing -- the union
+    already carries it.
+    """
+    record = []
+    for r, items in enumerate(unresolved):
+        for item in items:
+            arch = item["arch"]
+            readings = []
+            for variant in _claim_variants(per_reader[r][arch], item, arch, texts[r]):
+                readers = [dict(f) for f in per_reader]
+                readers[r] = {**readers[r], arch: variant}
+                merged = {a: consensus_report_facts(readers, a)[0]
+                          for a in ("mandible", "maxilla")}
+                readings.append(finalize_gt(case_id, merged, schema_path, quiet=True))
+            n = sum(_null_disagreement(gt[k], readings[0][k], readings[1][k])
+                    for k in ("global", "teeth"))
+            record.append({k: item[k] for k in ("arch", "field", "fdi", "screen")}
+                          | {"reader": r, "labels_nulled": n})
+    if record:
+        gt.setdefault("_derivation", {})["unresolved"] = record
     return gt
 
 
@@ -1888,6 +2040,8 @@ def main():
             continue
 
         per_reader: List[Dict] = []
+        per_reader_unresolved: List[List[Dict]] = []
+        per_reader_text: List[Optional[str]] = []
         for radiologist, rf in radiologist_files:
             suffix = f"_{radiologist}" if is_multi else ""
             facts_path = facts_dir / f"{case_id}{suffix}_report_facts.json"
@@ -1906,6 +2060,7 @@ def main():
                 facts = {arch: sanitize_report_facts(stored.get(arch) or {}, arch,
                                                      report_text)
                          for arch in ("mandible", "maxilla")}
+                unresolved = stored.get("_unresolved") or []
             else:
                 report_text = rf.read_text(encoding="utf-8", errors="replace").strip()
                 if not report_text:
@@ -1920,11 +2075,16 @@ def main():
                           file=sys.stderr)
                     continue
                 facts_path.write_text(json.dumps(facts, indent=2), encoding="utf-8")
+                unresolved = []
 
             per_reader.append(facts)
+            per_reader_unresolved.append(unresolved)
+            per_reader_text.append(report_text)
 
             if is_multi:
                 gt = finalize_gt(case_id, facts, args.schema)
+                gt = apply_unresolved(case_id, gt, [facts], [unresolved],
+                                      [report_text], args.schema)
                 out_path = Path(args.out_dir) / f"{case_id}_{radiologist}_gt.json"
                 out_path.write_text(json.dumps(gt, indent=2), encoding="utf-8")
                 print(f"[{case_id}] -> {out_path}")
@@ -1939,9 +2099,18 @@ def main():
             merged, agreement = {}, {}
             for arch in ("mandible", "maxilla"):
                 merged[arch], agreement[arch] = consensus_report_facts(per_reader, arch)
+            # The readers' unresolved claims travel with the merge, so the
+            # audit of this file knows them as settled rather than missing.
+            merged_out = dict(merged)
+            if any(per_reader_unresolved):
+                merged_out["_unresolved"] = [
+                    {k: v for k, v in u.items() if k != "original"}
+                    for items in per_reader_unresolved for u in items]
             (facts_dir / f"{case_id}_report_facts.json").write_text(
-                json.dumps(merged, indent=2), encoding="utf-8")
+                json.dumps(merged_out, indent=2), encoding="utf-8")
             gt = finalize_gt(case_id, merged, args.schema)
+            gt = apply_unresolved(case_id, gt, per_reader, per_reader_unresolved,
+                                  per_reader_text, args.schema)
             gt["_agreement"] = {**agreement, "n_radiologists": len(per_reader)}
             consensus_path.write_text(json.dumps(gt, indent=2), encoding="utf-8")
             print(f"[{case_id}] -> {consensus_path} (consensus of {len(per_reader)} radiologists)")
@@ -1950,6 +2119,8 @@ def main():
             # Single report -- write directly as {case_id}_gt.json, no
             # separate per-radiologist file needed.
             gt = finalize_gt(case_id, per_reader[0], args.schema)
+            gt = apply_unresolved(case_id, gt, per_reader, per_reader_unresolved,
+                                  per_reader_text, args.schema)
             consensus_path.write_text(json.dumps(gt, indent=2), encoding="utf-8")
             print(f"[{case_id}] -> {consensus_path}")
             n_written += 1
